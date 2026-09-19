@@ -1,0 +1,6 @@
+# CubeIDE / CubeMX project files: keep bytes exactly as the tools write them.
+*.ioc       -text
+*.launch    -text
+.project    -text
+.cproject   -text
+.mxproject  -text
