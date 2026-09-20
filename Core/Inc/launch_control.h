@@ -64,8 +64,8 @@ typedef struct {
     float pi_p_term;        // Proportional term output
     float pi_i_term;        // Integral term (accumulated)
     float pi_output;        // Combined PI output (correction)
-    uint32_t lc_torque;     // Torque limit from LC (×10 units)
-    uint32_t map_torque;    // Open-loop map torque (×10 units)
+    int32_t lc_torque;      // Torque limit from LC (×10 units)
+    int32_t map_torque;     // Open-loop map torque (×10 units)
     float vehicle_speed;    // Estimated vehicle speed (m/s)
     float rear_wheel_speed; // Rear wheel speed from motor (m/s)
     uint8_t sensor_healthy; // 1 = front wheel speed CAN is live
@@ -74,7 +74,9 @@ typedef struct {
 
 void lc_init(void);
 
-uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined);
+/* Returns torque to command, x10 Nm. Only reduces positive drive torque; a
+ * negative (regen) request passes through. */
+int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined);
 void lc_feed_wheel_speed(uint16_t front_left_speed_x10, uint16_t front_right_speed_x10);
 void lc_feed_tick(uint32_t tick_ms);
 const lc_debug_t *lc_get_debug(void);

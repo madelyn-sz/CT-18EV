@@ -1,8 +1,9 @@
 #include "launch_control.h"
 #include <math.h>
 
-/* Do not set to 1 until lc_map_rpm/lc_map_torque are populated and
- * lc_map_lookup() is fixed - as-is it clamps the car to 1.0 Nm. */
+/* Do not set to 1 until lc_map_rpm/lc_map_torque are populated. They are
+ * placeholders: every breakpoint 0 rpm, every value 1.0 Nm, so the lookup
+ * returns 1.0 Nm at any speed and the car is clamped to a crawl. */
 volatile uint8_t launch_control_enable = 0;
 
 #define LC_MAP_SIZE 8
@@ -13,38 +14,44 @@ static const uint16_t lc_map_rpm[LC_MAP_SIZE] = {0, 0, 0, 0, 0, 0, 0, 0};
 // These are x10 values
 static const uint16_t lc_map_torque[LC_MAP_SIZE] = {10, 10, 10, 10, 10, 10, 10, 10};
 
-static uint32_t lc_map_lookup(uint32_t motor_speed_rpm)
+/* Interpolate a table of monotonically increasing breakpoints. Separate from
+ * lc_map_lookup() so tests can drive it with a populated table. */
+static uint32_t map_interp(const uint16_t *bp, const uint16_t *val, int n, uint32_t x)
 {
-    // Clamp to top of table
-    if (motor_speed_rpm >= lc_map_rpm[LC_MAP_SIZE - 1]) {
-        return lc_map_torque[LC_MAP_SIZE - 1];
+    // Clamp to the ends of the table
+    if (x <= bp[0]) {
+        return val[0];
+    }
+    if (x >= bp[n - 1]) {
+        return val[n - 1];
     }
 
-    if (motor_speed_rpm <= lc_map_rpm[LC_MAP_SIZE - 1]) {
-        return lc_map_torque[0];
-    }
+    // Find the bracketing breakpoints and interpolate
+    for (int i = 0; i < n - 1; i++) {
+        if (x < bp[i + 1]) {
+            const uint32_t bp_lo = bp[i];
+            const uint32_t bp_hi = bp[i + 1];
+            const uint32_t val_lo = val[i];
+            const uint32_t val_hi = val[i + 1];
+            const uint32_t bp_range = bp_hi - bp_lo;
 
-    // Find surrounding breakpoints and interpolate
-    for (int i = 0; i < LC_MAP_SIZE; i++) {
-        if (motor_speed_rpm < lc_map_rpm[i + 1]) {
-            uint32_t rpm_lo = lc_map_rpm[i];
-            uint32_t rpm_hi = lc_map_rpm[i + 1];
-            uint32_t torq_lo = lc_map_torque[i];
-            uint32_t torq_hi = lc_map_torque[i + 1];
-            uint32_t rpm_range = rpm_hi - rpm_lo;
-
-            if (rpm_range == 0)
-                return torq_lo;
+            if (bp_range == 0) {
+                return val_lo;
+            }
 
             // Linear interpolation (integer math, no FP needed)
-            int32_t torq_range = (int32_t)torq_hi - (int32_t)torq_lo;
-            uint32_t rpm_offset = motor_speed_rpm - rpm_lo;
-            return (uint32_t)((int32_t)torq_lo +
-                              (torq_range * (int32_t)rpm_offset) / (int32_t)rpm_range);
+            const int32_t val_range = (int32_t)val_hi - (int32_t)val_lo;
+            const uint32_t offset = x - bp_lo;
+            return (uint32_t)((int32_t)val_lo + (val_range * (int32_t)offset) / (int32_t)bp_range);
         }
     }
 
-    return lc_map_torque[0];
+    return val[n - 1];
+}
+
+static uint32_t lc_map_lookup(uint32_t motor_speed_rpm)
+{
+    return map_interp(lc_map_rpm, lc_map_torque, LC_MAP_SIZE, motor_speed_rpm);
 }
 
 // Now float (32-bit) — atomic on Cortex-M3, was volatile double (non-atomic bug)
@@ -64,6 +71,22 @@ static float prev_slip_ratio = 0.0f;
 static float motor_rpm_to_wheel_ms(uint32_t motor_speed_rpm)
 {
     return (float)motor_speed_rpm * LC_RPM_TO_MS;
+}
+
+static void lc_reset_pi(void)
+{
+    dbg.pi_i_term = 0.0f;
+    dbg.pi_p_term = 0.0f;
+    dbg.pi_output = 0.0f;
+    dbg.slip_rate_cut = 0;
+}
+
+/* Clear on the transition, not on the next pass through the IDLE case, so the
+ * published PI terms match the published state. */
+static void lc_enter_idle(void)
+{
+    dbg.state = LC_STATE_IDLE;
+    lc_reset_pi();
 }
 
 void lc_init(void)
@@ -108,7 +131,7 @@ lc_state_t lc_get_state(void)
     return dbg.state;
 }
 
-uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined)
+int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined)
 {
 
     uint8_t sensor_ok = 1;
@@ -147,11 +170,7 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
     switch (dbg.state) {
 
     case LC_STATE_IDLE:
-        // Reset PI state when idle
-        dbg.pi_i_term = 0.0f;
-        dbg.pi_p_term = 0.0f;
-        dbg.pi_output = 0.0f;
-        dbg.slip_rate_cut = 0;
+        lc_reset_pi();
 
         if (launch_control_enable) {
             dbg.state = LC_STATE_ARMED;
@@ -159,15 +178,11 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
         break;
 
     case LC_STATE_ARMED:
-        // Reset PI state while armed
-        dbg.pi_i_term = 0.0f;
-        dbg.pi_p_term = 0.0f;
-        dbg.pi_output = 0.0f;
-        dbg.slip_rate_cut = 0;
+        lc_reset_pi();
         prev_slip_ratio = 0.0f;
 
         if (!launch_control_enable) {
-            dbg.state = LC_STATE_IDLE;
+            lc_enter_idle();
         } else if (tps_combined >= LC_THROTTLE_TRIGGER) {
             dbg.state = LC_STATE_LAUNCHING_OPENLOOP;
         }
@@ -176,7 +191,7 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
     case LC_STATE_LAUNCHING_OPENLOOP:
 
         if (!launch_control_enable || tps_combined < 0.05f) {
-            dbg.state = LC_STATE_IDLE;
+            lc_enter_idle();
         }
         // Crossover to closed loop when vehicle speed is reliable
         else if (sensor_ok && v_front > LC_CROSSOVER_SPEED_MS) {
@@ -187,9 +202,9 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
     case LC_STATE_LAUNCHING_CLOSEDLOOP:
 
         if (!launch_control_enable || tps_combined < 0.05f) {
-            dbg.state = LC_STATE_IDLE;
+            lc_enter_idle();
         } else if (v_front > LC_EXIT_SPEED_MS) {
-            dbg.state = LC_STATE_IDLE;
+            lc_enter_idle();
         }
         // Fall back to open-loop if sensor dies
         else if (!sensor_ok) {
@@ -198,7 +213,16 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
         break;
     }
 
-    uint32_t lc_torque_limit = driver_torque; // Default: passthrough
+    /* LC only reduces positive drive torque. Regen is negative and passes
+     * through, so the clamps below can assume a positive bound. */
+    if (driver_torque <= 0) {
+        dbg.map_torque = driver_torque;
+        dbg.lc_torque = driver_torque;
+        dbg.slip_rate_cut = 0;
+        return driver_torque;
+    }
+
+    int32_t lc_torque_limit = driver_torque; // Default: passthrough
 
     switch (dbg.state) {
 
@@ -211,13 +235,13 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
 
     case LC_STATE_LAUNCHING_OPENLOOP: {
 
-        uint32_t map_t = lc_map_lookup(motor_speed_rpm);
+        int32_t map_t = (int32_t)lc_map_lookup(motor_speed_rpm);
         dbg.map_torque = map_t;
         lc_torque_limit = map_t;
 
         // Even in open loop, if we have sensor data, apply slip rate limiter
         if (sensor_ok && dbg.slip_rate > LC_SLIP_RATE_MAX) {
-            lc_torque_limit = (uint32_t)((float)lc_torque_limit * LC_SLIP_RATE_CUT_MULT);
+            lc_torque_limit = (int32_t)((float)lc_torque_limit * LC_SLIP_RATE_CUT_MULT);
             dbg.slip_rate_cut = 1;
         } else {
             dbg.slip_rate_cut = 0;
@@ -254,14 +278,14 @@ uint32_t lc_update(uint32_t driver_torque, uint32_t motor_speed_rpm, float tps_c
         if (cl_torque > (float)driver_torque)
             cl_torque = (float)driver_torque;
 
-        lc_torque_limit = (uint32_t)cl_torque;
+        lc_torque_limit = (int32_t)cl_torque;
         // look up from table based on motor speed.
-        uint32_t map_t = lc_map_lookup(motor_speed_rpm);
+        int32_t map_t = (int32_t)lc_map_lookup(motor_speed_rpm);
         dbg.map_torque = map_t;
 
         // Slip rate emergency override
         if (dbg.slip_rate > LC_SLIP_RATE_MAX) {
-            lc_torque_limit = (uint32_t)((float)lc_torque_limit * LC_SLIP_RATE_CUT_MULT);
+            lc_torque_limit = (int32_t)((float)lc_torque_limit * LC_SLIP_RATE_CUT_MULT);
             dbg.slip_rate_cut = 1;
         } else {
             dbg.slip_rate_cut = 0;
