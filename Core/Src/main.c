@@ -119,6 +119,9 @@ volatile uint16_t ext_frame_count = 0;
 /* Worst control period seen, ms. Reported in byte 7 of SOC_KF_CAN_ID_STATE. */
 volatile uint32_t loop_dt_max_ms = 0;
 
+// Tracks the launch control enable edge so lc_init() runs once per disable.
+static uint8_t lc_was_enabled = 0;
+
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	RxHeader.StdId = 0;
 	if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK) {
@@ -159,9 +162,10 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	}
 	// AiM EVO5 front wheel speed broadcast
 	else if (RxHeader.StdId == LC_AIM_WHEEL_SPEED_CAN_ID) {
-		uint16_t fl_speed = RxData[1] << 8 | RxData[0]; // Front left  km/h x10, little endian
-		uint16_t fr_speed = RxData[3] << 8 | RxData[2]; // Front right km/h x10, little endian
-		lc_feed_wheel_speed(fl_speed, fr_speed);
+		// Front left km/h x10, little endian. Bytes 2-3 carry a right front
+		// channel that this car has no sensor for, so they are not read.
+		uint16_t fl_speed = RxData[1] << 8 | RxData[0];
+		lc_feed_wheel_speed(fl_speed);
 	}
 }
 
@@ -415,13 +419,19 @@ int main(void)
 		torque_request = regen_update(torque_request, motor_speed, tps_combined,
 				brake_pressed, soc, bms_fresh);
 
-		// Launch control: only active when enabled
+		/* Launch control. The tick goes in every pass, enabled or not, so the
+		 * CAN RX ISR timestamps the wheel speed against a current clock and
+		 * the sensor-timeout check is meaningful the moment LC is enabled. */
+		lc_feed_tick(HAL_GetTick());
 		if (launch_control_enable) {
-			lc_feed_tick(HAL_GetTick());
 			torque_request = lc_update(torque_request, motor_speed,
 					tps_combined);
-		} else {
-			lc_init(); // Reset state machine when disabled
+			lc_was_enabled = 1;
+		} else if (lc_was_enabled) {
+			// Reset once on the enable -> disable edge, not every pass: a reset
+			// per pass clears the debug struct that telemetry reads.
+			lc_init();
+			lc_was_enabled = 0;
 		}
 
 		// Brake Pressure Acquire and Calculate

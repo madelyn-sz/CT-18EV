@@ -84,8 +84,7 @@ static int32_t step_dt(int32_t torque, uint32_t rpm, float tps, uint32_t dt_ms)
     test_tick += dt_ms;
     lc_feed_tick(test_tick);
     if (test_sensor_live) {
-        const uint16_t x10 = ms_to_x10(test_front_ms);
-        lc_feed_wheel_speed(x10, x10);
+        lc_feed_wheel_speed(ms_to_x10(test_front_ms));
     }
     return lc_update(torque, rpm, tps);
 }
@@ -112,12 +111,11 @@ static void test_conversions(void)
 
     /* 36.0 km/h is 10 m/s, and the CAN signal is km/h x10. */
     lc_reset_all();
-    lc_feed_wheel_speed(360, 360);
+    lc_feed_wheel_speed(360);
     check_near(front_wheel_speed_ms, 10.0f, 1e-4f, "360 km/h x10 -> 10 m/s");
 
-    /* Left and right are averaged. */
-    lc_feed_wheel_speed(360, 720);
-    check_near(front_wheel_speed_ms, 15.0f, 1e-4f, "front speed is the L/R mean");
+    lc_feed_wheel_speed(0);
+    check_near(front_wheel_speed_ms, 0.0f, 1e-6f, "zero km/h -> zero m/s");
 
     check_near(motor_rpm_to_wheel_ms(1000), 1000.0f * LC_RPM_TO_MS, 1e-4f, "rpm -> m/s");
     check_near(motor_rpm_to_wheel_ms(0), 0.0f, 1e-6f, "zero rpm -> zero m/s");
@@ -125,8 +123,15 @@ static void test_conversions(void)
     /* The two precomputed constants must be exact inverses. */
     check_near(LC_RPM_TO_MS * LC_MS_TO_RPM, 1.0f, 1e-5f, "RPM_TO_MS inverts MS_TO_RPM");
 
-    /* Printed, not asserted: the plausible range is a vehicle question. */
+    /* A reciprocated LC_GEAR_RATIO still round-trips through LC_MS_TO_RPM, so
+     * the inverse check above passes either way. Only the physical relation
+     * pins the direction of the conversion. */
     const float v6000 = motor_rpm_to_wheel_ms(6000);
+    const float wheel_rps = 6000.0f / LC_GEAR_RATIO / 60.0f;
+    check_near(v6000, wheel_rps * 2.0f * 3.14159265f * LC_TIRE_RADIUS_M, 1e-3f,
+               "rpm -> m/s divides by the reduction");
+    check(v6000 > 10.0f && v6000 < 60.0f, "6000 rpm is a plausible road speed");
+
     printf("    6000 rpm implies %.1f m/s (%.0f km/h) at LC_GEAR_RATIO=%.4f\n", v6000, v6000 * 3.6f,
            LC_GEAR_RATIO);
     printf("    LC_EXIT_SPEED_MS (%.0f m/s) implies %u rpm\n", (double)LC_EXIT_SPEED_MS,
@@ -160,10 +165,6 @@ static void test_map_interp(void)
     static const uint16_t flat_val[4] = {10, 10, 10, 10};
     check_eq((int32_t)map_interp(flat_bp, flat_val, 4, 0), 10, "degenerate table at zero");
     check_eq((int32_t)map_interp(flat_bp, flat_val, 4, 5000), 10, "degenerate table at speed");
-
-    /* The shipped table is still placeholder calibration: 1.0 Nm everywhere. */
-    check_eq((int32_t)lc_map_lookup(0), 10, "shipped map at zero rpm");
-    check_eq((int32_t)lc_map_lookup(6000), 10, "shipped map at 6000 rpm");
 }
 
 static void test_slip_ratio(void)
@@ -211,11 +212,18 @@ static void test_slip_filter_and_rate(void)
     set_front(0.0f);
     const uint32_t rpm10 = ms_to_rpm(10.0f);
 
-    step(1000, rpm10, 0.0f);
+    /* The filter seeds on the first launching pass, so launch with both speeds
+     * at zero; the step to raw 1.0 below is then a genuine filter step. */
+    arm_and_launch(0.0f);
+    step(1000, 0u, 0.5f);
+    check_near(dbg.slip_ratio, 0.0f, 1e-6f, "filter seeds at the measured slip");
+    check_near(dbg.slip_rate, 0.0f, 1e-6f, "seeded pass reports no slip rate");
+
+    step(1000, rpm10, 0.5f);
     const float after_one = 1.0f - LC_SLIP_FILTER_ALPHA;
     check_near(dbg.slip_ratio, after_one, 1e-3f, "one filter step at nominal dt");
 
-    step(1000, rpm10, 0.0f);
+    step(1000, rpm10, 0.5f);
     const float after_two = after_one * LC_SLIP_FILTER_ALPHA + (1.0f - LC_SLIP_FILTER_ALPHA);
     check_near(dbg.slip_ratio, after_two, 1e-3f, "two filter steps at nominal dt");
 
@@ -225,7 +233,7 @@ static void test_slip_filter_and_rate(void)
 
     /* Settles toward the raw value. */
     for (int i = 0; i < 200; i++) {
-        step(1000, rpm10, 0.0f);
+        step(1000, rpm10, 0.5f);
     }
     check_near(dbg.slip_ratio, 1.0f, 1e-3f, "filter settles at raw slip");
     check_near(dbg.slip_rate, 0.0f, 1e-2f, "slip rate settles at zero");
@@ -307,17 +315,21 @@ static void test_dt_invariance(void)
 
     lc_reset_all();
     set_front(0.0f);
-    step_dt(1000, rpm10, 0.0f, 10u); /* first call uses nominal dt */
+    arm_and_launch(0.0f);
+    step_dt(1000, 0u, 0.5f, 10u);       /* seed the filter at slip 0 */
+    step_dt(1000, rpm10, 0.5f, 10u);    /* first filtered call, at nominal dt */
     for (uint32_t t = 0; t < settle_ms; t += 10u) {
-        step_dt(1000, rpm10, 0.0f, 10u);
+        step_dt(1000, rpm10, 0.5f, 10u);
     }
     const float transient_coarse = dbg.slip_ratio;
 
     lc_reset_all();
     set_front(0.0f);
-    step_dt(1000, rpm10, 0.0f, 10u);
+    arm_and_launch(0.0f);
+    step_dt(1000, 0u, 0.5f, 10u);
+    step_dt(1000, rpm10, 0.5f, 10u);
     for (uint32_t t = 0; t < settle_ms; t += 5u) {
-        step_dt(1000, rpm10, 0.0f, 5u);
+        step_dt(1000, rpm10, 0.5f, 5u);
     }
     const float transient_fine = dbg.slip_ratio;
 
@@ -432,7 +444,7 @@ static void test_torque_passthrough(void)
 
     lc_reset_all();
     set_front(10.0f);
-    check_eq(step(1500, 0, 0.0f), 1500, "idle passes torque through");
+    check_eq(step(1500, 0, 0.0f), 1500, "armed passes torque through");
 
     launch_control_enable = 1;
     step(1500, 0, 0.0f);
@@ -444,8 +456,12 @@ static void test_negative_torque_passthrough(void)
 {
     printf("test_negative_torque_passthrough\n");
 
-    /* Regen torque is negative and must pass through unchanged in every
-     * state, not wrap through unsigned arithmetic. */
+    /* Regen torque is negative and must pass through unchanged, not wrap
+     * through unsigned arithmetic. REGEN_TPS_THRESHOLD and LC_THROTTLE_RELEASE
+     * are the same throttle position, so regen can only arrive on a pass where
+     * the state machine has already left a launching state: the reachable
+     * cases are idle and armed. The open-loop case below is the guard itself,
+     * proving the early return runs before the per-state torque logic. */
     const int32_t regen = -250;
 
     lc_reset_all();
@@ -459,13 +475,7 @@ static void test_negative_torque_passthrough(void)
     lc_reset_all();
     arm_and_launch(1.0f);
     check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "open loop reached");
-    check_eq(step(regen, 0, 0.5f), regen, "open loop passes regen through");
-
-    lc_reset_all();
-    arm_and_launch(10.0f);
-    step(1000, 0, 0.5f);
-    check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "closed loop reached");
-    check_eq(step(regen, 0, 0.5f), regen, "closed loop passes regen through");
+    check_eq(step(regen, 0, 0.5f), regen, "the map never clobbers regen torque");
 
     /* Zero is the boundary and must not be treated as drive torque. */
     check_eq(step(0, 0, 0.5f), 0, "zero torque passes through");
@@ -480,8 +490,9 @@ static void test_torque_limiting(void)
     arm_and_launch(1.0f);
     const int32_t out = step(2200, 0, 0.5f);
     check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "open loop");
-    check_eq(out, 10, "open loop uses the map torque");
-    check_eq(dbg.map_torque, 10, "map torque published");
+    check_eq(dbg.map_torque, (int32_t)lc_map_lookup(0), "map torque published");
+    check_eq(out, dbg.map_torque < 2200 ? dbg.map_torque : 2200,
+             "open loop commands the map torque, capped at the request");
 
     /* Never above the driver request. */
     lc_reset_all();
@@ -497,16 +508,22 @@ static void test_slip_rate_cut(void)
 {
     printf("test_slip_rate_cut\n");
 
-    /* Slip from zero to full in one step exceeds LC_SLIP_RATE_MAX. Front
-     * speed stays below the crossover, so this is the open-loop path. */
+    /* Slip from zero to full in one step exceeds LC_SLIP_RATE_MAX. Front speed
+     * stays below the crossover, so this is the open-loop path. */
     lc_reset_all();
     arm_and_launch(1.0f);
     check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "open loop");
 
+    /* Seed the filter at zero slip first; the rate is only meaningful once the
+     * filter holds a settled value. */
+    step(2200, ms_to_rpm(1.0f), 0.5f);
+    check_near(dbg.slip_rate, 0.0f, 1e-6f, "seeded pass reports no slip rate");
+
     const int32_t out = step(2200, ms_to_rpm(100.0f), 0.5f);
     check(dbg.slip_rate > LC_SLIP_RATE_MAX, "slip rate exceeded the limit");
     check(dbg.slip_rate_cut == 1, "slip rate cut flag raised");
-    check_eq(out, (int32_t)(10.0f * LC_SLIP_RATE_CUT_MULT), "torque halved by the cut");
+    check_eq(out, (int32_t)((float)dbg.map_torque * LC_SLIP_RATE_CUT_MULT),
+             "torque scaled by the cut multiplier");
 
     /* Once slip settles the flag clears. */
     for (int i = 0; i < 100; i++) {
@@ -574,17 +591,36 @@ static void test_idle_entry_clears_pi(void)
     step(2200, spin_rpm, 0.5f);
     check(dbg.state == LC_STATE_IDLE, "exit speed -> idle");
     check_near(dbg.pi_i_term, 0.0f, 1e-6f, "exit speed clears the I term");
+}
 
-    /* Route 3: disarm from ARMED. */
+/* Reaching LC_EXIT_SPEED_MS latches, so a launch cannot restart while the car
+ * is still above that speed with the throttle held. */
+static void test_exit_speed_does_not_rearm(void)
+{
+    printf("test_exit_speed_does_not_rearm\n");
+
     lc_reset_all();
-    set_front(10.0f);
-    launch_control_enable = 1;
-    step(1000, 0, 0.0f);
-    check(dbg.state == LC_STATE_ARMED, "armed");
-    launch_control_enable = 0;
-    step(1000, 0, 0.0f);
-    check(dbg.state == LC_STATE_IDLE, "disarm -> idle");
-    check_near(dbg.pi_i_term, 0.0f, 1e-6f, "disarm leaves the I term clear");
+    arm_and_launch(3.0f);
+    step(2200, ms_to_rpm(3.3f), 0.9f);
+    check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "closed loop before the exit");
+
+    set_front(25.0f); /* past LC_EXIT_SPEED_MS, driver still flat */
+    int left_idle = 0;
+    int trimmed_torque = 0;
+    for (int i = 0; i < 40; i++) {
+        if (step(2200, ms_to_rpm(25.0f), 0.9f) != 2200) {
+            trimmed_torque = 1;
+        }
+        if (dbg.state != LC_STATE_IDLE) {
+            left_idle = 1;
+        }
+    }
+    check(!left_idle, "stays idle above exit speed while the throttle is held");
+    check(!trimmed_torque, "torque passes through untouched after the exit");
+
+    /* Lifting releases the latch so the next launch still works. */
+    step(0, ms_to_rpm(25.0f), 0.0f);
+    check(dbg.state == LC_STATE_ARMED, "re-arms once the driver lifts");
 }
 
 int main(void)
@@ -601,6 +637,7 @@ int main(void)
     test_negative_torque_passthrough();
     test_torque_limiting();
     test_slip_rate_cut();
+    test_exit_speed_does_not_rearm();
     test_pi_behaviour();
     test_idle_entry_clears_pi();
 

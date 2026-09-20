@@ -57,11 +57,13 @@ static uint32_t lc_map_lookup(uint32_t motor_speed_rpm)
 // Now float (32-bit) — atomic on Cortex-M3, was volatile double (non-atomic bug)
 static volatile float front_wheel_speed_ms = 0.0f;
 
-// Timestamp of last AiM wheel speed CAN message
+/* Timestamp of the last AiM wheel speed CAN message. Written after the speed
+ * it belongs to and read before it; see lc_feed_wheel_speed(). */
 static volatile uint32_t last_wheel_speed_tick = 0;
 
-// Current system tick, fed from main loop
-static uint32_t current_tick_ms = 0;
+/* Current system tick, fed from the main loop and read by the CAN RX ISR, so
+ * it must not be cached in a register. */
+static volatile uint32_t current_tick_ms = 0;
 
 // Tick at the previous lc_update(), for the measured loop period.
 static uint32_t last_update_tick = 0;
@@ -72,9 +74,36 @@ static lc_debug_t dbg;
 
 static float prev_slip_ratio = 0.0f;
 
+// Whether the previous pass was launching; gates the slip filter in lc_update().
+static uint8_t was_launching = 0;
+
+/* Set when a launch ends by reaching LC_EXIT_SPEED_MS, cleared when the driver
+ * lifts. Blocks re-arming so IDLE cannot cycle straight back into a launch
+ * while the car is still above exit speed with the throttle pinned. */
+static uint8_t exit_latched = 0;
+
 static float motor_rpm_to_wheel_ms(uint32_t motor_speed_rpm)
 {
     return (float)motor_speed_rpm * LC_RPM_TO_MS;
+}
+
+/* Slip filter weight for a given period. expf() is a software routine on this
+ * Cortex-M3 (-mfloat-abi=soft), so the result is cached per whole millisecond
+ * of loop period, which dt is already clamped to. The weight is a pure
+ * function of the period, so entries never need invalidating, and zero is a
+ * safe "not computed" marker: the smallest weight in range is about 6e-6. */
+static float alpha_cache[LC_DT_MAX_MS + 1u];
+
+static float slip_filter_alpha(float dt)
+{
+    uint32_t ms = (uint32_t)(dt * 1000.0f + 0.5f);
+    if (ms > LC_DT_MAX_MS) {
+        ms = LC_DT_MAX_MS;
+    }
+    if (alpha_cache[ms] == 0.0f) {
+        alpha_cache[ms] = expf(-dt / LC_SLIP_TAU_S);
+    }
+    return alpha_cache[ms];
 }
 
 static void lc_reset_pi(void)
@@ -110,16 +139,20 @@ void lc_init(void)
     dbg.slip_rate_cut = 0;
     dbg.dt_s = LC_DT_S;
     prev_slip_ratio = 0.0f;
+    was_launching = 0;
+    exit_latched = 0;
     last_update_tick = 0;
     have_last_update = 0;
 }
 
-void lc_feed_wheel_speed(uint16_t front_left_speed_x10, uint16_t front_right_speed_x10)
+void lc_feed_wheel_speed(uint16_t front_left_speed_x10)
 {
-    // Convert from km/h × 10 to m/s using precomputed constant
-    float left_ms = (float)front_left_speed_x10 * LC_KMH10_TO_MS;
-    float right_ms = (float)front_right_speed_x10 * LC_KMH10_TO_MS;
-    front_wheel_speed_ms = (left_ms + right_ms) * 0.5f;
+    /* Runs in the CAN RX ISR, which can land between lc_update()'s two loads.
+     * Speed is published before its timestamp and read after it, so a torn
+     * read pairs a fresh speed with the previous frame's timestamp: the sensor
+     * reads staler than it is, never fresher. Both objects are volatile, which
+     * holds the store order. */
+    front_wheel_speed_ms = (float)front_left_speed_x10 * LC_KMH10_TO_MS;
     last_wheel_speed_tick = current_tick_ms;
 }
 
@@ -158,53 +191,74 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     have_last_update = 1;
     dbg.dt_s = dt;
 
+    // Timestamp before speed; see lc_feed_wheel_speed() for why the order matters.
+    uint32_t wheel_tick = last_wheel_speed_tick;
+    float v_front = front_wheel_speed_ms;
+
     uint8_t sensor_ok = 1;
-    uint32_t elapsed = current_tick_ms - last_wheel_speed_tick;
+    uint32_t elapsed = current_tick_ms - wheel_tick;
     // Handle tick wraparound if elapsed is huge, sensor timed out
-    if (elapsed > LC_SENSOR_TIMEOUT_MS || last_wheel_speed_tick == 0) {
+    if (elapsed > LC_SENSOR_TIMEOUT_MS || wheel_tick == 0) {
         sensor_ok = 0;
     }
     dbg.sensor_healthy = sensor_ok;
 
     float v_rear = motor_rpm_to_wheel_ms(motor_speed_rpm);
-    float v_front = front_wheel_speed_ms; // volatile float — atomic on CM3
 
     dbg.rear_wheel_speed = v_rear;
     dbg.vehicle_speed = v_front;
 
     // Slip ratio: lambda = (v_rear - v_front) / max(v_rear, v_front, epsilon)
+    float max_speed = fmaxf(v_rear, v_front);
     float slip_raw = 0.0f;
-    
-    // maybe make this value bigger?
-    if (v_front > 0.5f) {
 
-        slip_raw = (v_rear - v_front) / v_front; // only when meaningful
+    // maybe make this value bigger?
+    if (max_speed > 0.5f) {
+
+        slip_raw = (v_rear - v_front) / max_speed; // only when meaningful
     }
     slip_raw = fmaxf(0.0f, fminf(slip_raw, 1.0f));
     dbg.slip_ratio_raw = slip_raw;
 
-    /* Weight derived from the measured period holds the time constant at
+    /* The filter only carries history through a launch. Entering one seeds it
+     * with the measured slip, so slip_rate reports the tyres rather than the
+     * filter settling up from zero. dbg.state is still the previous pass's
+     * value here; the transition switch runs below.
+     *
+     * The weight follows the measured period, holding the time constant at
      * LC_SLIP_TAU_S under jitter; at dt == LC_DT_S it is LC_SLIP_FILTER_ALPHA. */
-    const float alpha = expf(-dt / LC_SLIP_TAU_S);
-    dbg.slip_ratio = dbg.slip_ratio * alpha + slip_raw * (1.0f - alpha);
+    const uint8_t launching = (dbg.state == LC_STATE_LAUNCHING_OPENLOOP ||
+                               dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP);
+    if (launching && was_launching) {
+        const float alpha = slip_filter_alpha(dt);
+        dbg.slip_ratio = dbg.slip_ratio * alpha + slip_raw * (1.0f - alpha);
 
-    // Slip rate (dlambda/dt)
-    dbg.slip_rate = (dbg.slip_ratio - prev_slip_ratio) / dt;
+        // Slip rate (dlambda/dt)
+        dbg.slip_rate = (dbg.slip_ratio - prev_slip_ratio) / dt;
+    } else {
+        dbg.slip_ratio = slip_raw;
+        dbg.slip_rate = 0.0f;
+    }
     prev_slip_ratio = dbg.slip_ratio;
+    was_launching = launching;
 
     switch (dbg.state) {
 
     case LC_STATE_IDLE:
         lc_reset_pi();
 
-        if (launch_control_enable) {
+        // Lifting off releases the exit latch and allows a fresh launch.
+        if (tps_combined < LC_THROTTLE_RELEASE) {
+            exit_latched = 0;
+        }
+
+        if (launch_control_enable && !exit_latched) {
             dbg.state = LC_STATE_ARMED;
         }
         break;
 
     case LC_STATE_ARMED:
         lc_reset_pi();
-        prev_slip_ratio = 0.0f;
 
         if (!launch_control_enable) {
             lc_enter_idle();
@@ -215,7 +269,7 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
 
     case LC_STATE_LAUNCHING_OPENLOOP:
 
-        if (!launch_control_enable || tps_combined < 0.05f) {
+        if (!launch_control_enable || tps_combined < LC_THROTTLE_RELEASE) {
             lc_enter_idle();
         }
         // Crossover to closed loop when vehicle speed is reliable
@@ -226,9 +280,12 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
 
     case LC_STATE_LAUNCHING_CLOSEDLOOP:
 
-        if (!launch_control_enable || tps_combined < 0.05f) {
+        if (!launch_control_enable || tps_combined < LC_THROTTLE_RELEASE) {
             lc_enter_idle();
         } else if (v_front > LC_EXIT_SPEED_MS) {
+            /* Latch, or IDLE re-arms on the next pass while the car is still
+             * above exit speed and the driver is still flat. */
+            exit_latched = 1;
             lc_enter_idle();
         }
         // Fall back to open-loop if sensor dies
@@ -282,35 +339,33 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         float error = LC_SLIP_TARGET - dbg.slip_ratio;
 
         dbg.pi_p_term = LC_KP * error;
-        float pi_i_candidate = dbg.pi_i_term + LC_KI * error * LC_DT_S;
-        float pi_output_candidate = dbg.pi_p_term + pi_i_candidate;
 
-        // only integrate if it would not push us further into saturation
-        if(pi_output_candidate > (float)driver_torque) {
-            if(error < 0.0f) {
-                dbg.pi_i_term = pi_i_candidate;
+        /* Conditional integration: accumulate only when doing so would not
+         * drive the command further into a limit. Saturation is enforced by
+         * the output clamp below and nowhere else; a limit written back into
+         * pi_i_term outlives the transient that set it. */
+        float i_candidate = dbg.pi_i_term + LC_KI * error * dt;
+        float cl_candidate = (float)driver_torque + dbg.pi_p_term + i_candidate;
+
+        if (cl_candidate > (float)driver_torque) {
+            if (error < 0.0f) {
+                dbg.pi_i_term = i_candidate;
             }
-        } else if (pi_output_candidate < 0.0f) {
-            if(error > 0.0f) {
-                dbg.pi_i_term = pi_i_candidate;
+        } else if (cl_candidate < 0.0f) {
+            if (error > 0.0f) {
+                dbg.pi_i_term = i_candidate;
             }
         } else {
-            dbg.pi_i_term = pi_i_candidate;
+            dbg.pi_i_term = i_candidate;
         }
-
-        // clamp the integral term if it is already above saturation limits
-        // this can happen when the driver decreases the commanded torque
-        // note: brief spikes in the P term can cause integrator to get cut down permanently
-        // maybe better to some max bound P term instead?
-        float i_min = -dbg.pi_p_term;
-        float i_max = (float)driver_torque - dbg.pi_p_term;
-        if (dbg.pi_i_term > i_max) dbg.pi_i_term = i_max;
-        if (dbg.pi_i_term < i_min) dbg.pi_i_term = i_min;
 
         // Controller output
         dbg.pi_output = dbg.pi_p_term + dbg.pi_i_term;
 
-        float cl_torque = dbg.pi_output;
+        /* The driver's request is the operating point and the controller
+         * supplies only the deviation from it. The gains are sized for that
+         * deviation, so dropping the feedforward means retuning them. */
+        float cl_torque = (float)driver_torque + dbg.pi_output;
 
         // Clamp the torque values between zero and driver_torque
         if (cl_torque < 0.0f)
