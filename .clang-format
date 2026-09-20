@@ -1,0 +1,30 @@
+---
+# Do NOT run across the whole tree: Drivers/ is vendor code, and the
+# CubeMX-generated files use ST's 2-space style and are rewritten on every
+# regeneration. Use tools/format.sh, which covers only the files we maintain.
+Language: Cpp
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakBeforeBraces: Linux
+IndentCaseLabels: false
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: Consecutive
+AlignTrailingComments: true
+
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+
+# Include order is load-bearing (main.h must precede the HAL headers).
+SortIncludes: Never
+---

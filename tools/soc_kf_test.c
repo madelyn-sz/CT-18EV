@@ -29,14 +29,16 @@ static void check_near(float got, float want, float tol, const char *what)
     }
 }
 
-typedef struct { float z, v1; } cell_t;
+typedef struct {
+    float z, v1;
+} cell_t;
 
 static void cell_step(cell_t *c, float i_cell, float dt)
 {
     const float r1 = lut(soc_kf_r1, c->z, 0);
-    const float a  = expf(-dt / SOC_KF_TAU1_S);
-    c->z  -= i_cell * dt / (3600.0f * SOC_KF_CAP_AH);
-    c->v1  = a * c->v1 + r1 * (1.0f - a) * i_cell;
+    const float a = expf(-dt / SOC_KF_TAU1_S);
+    c->z -= i_cell * dt / (3600.0f * SOC_KF_CAP_AH);
+    c->v1 = a * c->v1 + r1 * (1.0f - a) * i_cell;
 }
 
 static float cell_terminal(const cell_t *c, float i_cell)
@@ -54,12 +56,11 @@ static void test_lut_breakpoints(void)
     }
     const float span = (float)(SOC_KF_N_BP - 1);
     const float zmid = (20.0f + 0.5f) / span;
-    check_near(lut(soc_kf_ocv, zmid, 0),
-               0.5f * (soc_kf_ocv[20] + soc_kf_ocv[21]), 1e-5f, "ocv midpoint");
+    check_near(lut(soc_kf_ocv, zmid, 0), 0.5f * (soc_kf_ocv[20] + soc_kf_ocv[21]), 1e-5f,
+               "ocv midpoint");
 
     check_near(lut(soc_kf_ocv, -1.0f, 0), soc_kf_ocv[0], 1e-5f, "ocv clamps low");
-    check_near(lut(soc_kf_ocv, 2.0f, 0), soc_kf_ocv[SOC_KF_N_BP - 1], 1e-5f,
-               "ocv clamps high");
+    check_near(lut(soc_kf_ocv, 2.0f, 0), soc_kf_ocv[SOC_KF_N_BP - 1], 1e-5f, "ocv clamps high");
 
     float slope;
     (void)lut(soc_kf_ocv, zmid, &slope);
@@ -78,10 +79,10 @@ static void test_ocv_inverse(void)
 }
 
 /* Returns final |error| in SoC. */
-static float run_sim(float true_z0, float orion_soc_pct, float i_pack_a,
-                     float seconds, int rest_start, float *out_est)
+static float run_sim(float true_z0, float orion_soc_pct, float i_pack_a, float seconds,
+                     int rest_start, float *out_est)
 {
-    cell_t cell = { true_z0, 0.0f };
+    cell_t cell = {true_z0, 0.0f};
     soc_kf_init();
 
     uint32_t t = 0;
@@ -96,7 +97,7 @@ static float run_sim(float true_z0, float orion_soc_pct, float i_pack_a,
         cell_step(&cell, i_cell, 0.020f);
         const float v_cell = cell_terminal(&cell, i_cell);
 
-        const int16_t  ibat = (int16_t)lrintf(i_pack * 10.0f);
+        const int16_t ibat = (int16_t)lrintf(i_pack * 10.0f);
         const uint16_t vbat = (uint16_t)lrintf(v_cell * (float)SOC_KF_NS * 10.0f);
         soc_kf_feed_bms(ibat, vbat, 25, (uint8_t)lrintf(orion_soc_pct), t);
 
@@ -106,7 +107,8 @@ static float run_sim(float true_z0, float orion_soc_pct, float i_pack_a,
         }
         t += 20u;
     }
-    if (out_est) *out_est = s.dbg.soc;
+    if (out_est)
+        *out_est = s.dbg.soc;
     return fabsf(s.dbg.soc - cell.z);
 }
 
@@ -126,8 +128,7 @@ static void test_converges_from_bad_seed(void)
     printf("test_converges_from_bad_seed\n");
     float est = 0.0f;
     const float err = run_sim(0.72f, 50.0f, 40.0f, 120.0f, 0, &est);
-    printf("    est=%.4f after 120s, err = %.4f (%.2f%% SoC)\n",
-           est, err, err * 100.0f);
+    printf("    est=%.4f after 120s, err = %.4f (%.2f%% SoC)\n", est, err, err * 100.0f);
     check(err < 0.03f, "converges to within 3% SoC from a 22% seed error");
 }
 
@@ -149,10 +150,8 @@ static void test_coulomb_accuracy(void)
     printf("test_coulomb_accuracy\n");
     float est = 0.0f;
     run_sim(0.80f, 80.0f, 100.0f, 62.5f, 1, &est);
-    const float expected_drop = 100.0f * 60.0f / 3600.0f
-                              / (SOC_KF_CAP_AH * (float)SOC_KF_NP);
-    printf("    charge_ah = %.4f, expected drop %.4f SoC\n",
-           s.dbg.charge_ah, expected_drop);
+    const float expected_drop = 100.0f * 60.0f / 3600.0f / (SOC_KF_CAP_AH * (float)SOC_KF_NP);
+    printf("    charge_ah = %.4f, expected drop %.4f SoC\n", s.dbg.charge_ah, expected_drop);
     check_near(s.dbg.charge_ah, 100.0f * 60.0f / 3600.0f, 0.05f,
                "cumulative charge matches integral");
 }
@@ -184,12 +183,10 @@ static void test_packing(void)
     check_near((float)soc / 10000.0f, s.dbg.soc, 1e-4f, "SoC round-trips");
 
     const int16_t innov = (int16_t)(uint16_t)(d[2] | (d[3] << 8));
-    check_near((float)innov / 10000.0f, s.dbg.innovation, 1e-4f,
-               "innovation round-trips");
+    check_near((float)innov / 10000.0f, s.dbg.innovation, 1e-4f, "innovation round-trips");
 
     const int16_t ah = (int16_t)(uint16_t)(d[4] | (d[5] << 8));
-    check_near((float)ah / 100.0f, s.dbg.charge_ah, 0.01f,
-               "cumulative charge round-trips");
+    check_near((float)ah / 100.0f, s.dbg.charge_ah, 0.01f, "cumulative charge round-trips");
 
     check(d[6] == s.dbg.flags, "flags in byte 6");
     check((d[6] & SOC_KF_FLAG_INIT) != 0, "INIT reported");
@@ -221,7 +218,8 @@ static void test_rejects_bad_voltage(void)
     uint32_t t = 10000u;
     for (int k = 0; k < 50; k++) {
         soc_kf_feed_bms(0, 65000u, 25, 60, t);
-        if (k % 5 == 0) soc_kf_update(t);
+        if (k % 5 == 0)
+            soc_kf_update(t);
         t += 20u;
     }
     printf("    soc %.4f -> %.4f under garbage voltage\n", before, s.dbg.soc);
