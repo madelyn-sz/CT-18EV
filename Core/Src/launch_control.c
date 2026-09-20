@@ -173,12 +173,12 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     dbg.vehicle_speed = v_front;
 
     // Slip ratio: lambda = (v_rear - v_front) / max(v_rear, v_front, epsilon)
-    float max_speed = fmaxf(v_rear, v_front);
     float slip_raw = 0.0f;
+    
     // maybe make this value bigger?
-    if (max_speed > 0.5f) {
+    if (v_front > 0.5f) {
 
-        slip_raw = (v_rear - v_front) / max_speed; // only when meaningful
+        slip_raw = (v_rear - v_front) / v_front; // only when meaningful
     }
     slip_raw = fmaxf(0.0f, fminf(slip_raw, 1.0f));
     dbg.slip_ratio_raw = slip_raw;
@@ -282,20 +282,35 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         float error = LC_SLIP_TARGET - dbg.slip_ratio;
 
         dbg.pi_p_term = LC_KP * error;
-        dbg.pi_i_term += LC_KI * error * dt;
+        float pi_i_candidate = dbg.pi_i_term + LC_KI * error * LC_DT_S;
+        float pi_output_candidate = dbg.pi_p_term + pi_i_candidate;
 
-        // Clamping the I term to -driver_torque to driver_torque
-        if (dbg.pi_i_term < -(float)driver_torque) {
-            dbg.pi_i_term = -(float)driver_torque;
+        // only integrate if it would not push us further into saturation
+        if(pi_output_candidate > (float)driver_torque) {
+            if(error < 0.0f) {
+                dbg.pi_i_term = pi_i_candidate;
+            }
+        } else if (pi_output_candidate < 0.0f) {
+            if(error > 0.0f) {
+                dbg.pi_i_term = pi_i_candidate;
+            }
+        } else {
+            dbg.pi_i_term = pi_i_candidate;
         }
-        if (dbg.pi_i_term > (float)driver_torque) {
-            dbg.pi_i_term = (float)driver_torque;
-        }
+
+        // clamp the integral term if it is already above saturation limits
+        // this can happen when the driver decreases the commanded torque
+        // note: brief spikes in the P term can cause integrator to get cut down permanently
+        // maybe better to some max bound P term instead?
+        float i_min = -dbg.pi_p_term;
+        float i_max = (float)driver_torque - dbg.pi_p_term;
+        if (dbg.pi_i_term > i_max) dbg.pi_i_term = i_max;
+        if (dbg.pi_i_term < i_min) dbg.pi_i_term = i_min;
 
         // Controller output
         dbg.pi_output = dbg.pi_p_term + dbg.pi_i_term;
 
-        float cl_torque = (float)driver_torque + dbg.pi_output;
+        float cl_torque = dbg.pi_output;
 
         // Clamp the torque values between zero and driver_torque
         if (cl_torque < 0.0f)
