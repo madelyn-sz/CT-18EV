@@ -9,9 +9,9 @@
 #ifndef SOC_KF_TABLES_H
 #define SOC_KF_TABLES_H
 
-#define SOC_KF_N_BP     41
-#define SOC_KF_TAU1_S   24.5f
-#define SOC_KF_CAP_AH   4.9901f   /* per cell, C/20 measured */
+#define SOC_KF_N_BP   41
+#define SOC_KF_TAU1_S 24.5f
+#define SOC_KF_CAP_AH 4.9901f /* per cell, C/20 measured */
 
 static const float soc_kf_ocv[SOC_KF_N_BP] = {
     2.518034f, 2.701741f, 2.815751f, 2.895162f, 2.966806f, 3.037089f, 3.103833f,
