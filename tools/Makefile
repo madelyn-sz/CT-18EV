@@ -10,7 +10,7 @@ CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -I../Core/Inc
 LDLIBS   = -lm
 
-TESTS = soc_kf_test lc_test can_tx_test rtd_test
+TESTS = soc_kf_test lc_test can_tx_test rtd_test adc_test
 
 .PHONY: all test clean
 all: test
@@ -28,6 +28,10 @@ soc_kf_test: soc_kf_test.c ../Core/Src/soc_kf.c ../Core/Inc/soc_kf.h ../Core/Inc
 # launch_control has no HAL dependency, so it needs no shim.
 lc_test: lc_test.c ../Core/Src/launch_control.c ../Core/Inc/launch_control.h
 	$(CC) $(CFLAGS) -o $@ lc_test.c $(LDLIBS)
+
+# adc reaches the HAL for the converters; ADC_HOST lets the test act as the DMA.
+adc_test: adc_test.c ../Core/Src/adc.c ../Core/Inc/adc.h
+	$(CC) $(CFLAGS) -DADC_HOST -o $@ adc_test.c $(LDLIBS)
 
 # rtd takes elapsed time from the caller, so it needs no shim.
 rtd_test: rtd_test.c ../Core/Src/rtd.c ../Core/Inc/rtd.h

@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "pinout.h"
+#include "adc.h"
 #include "can_tx.h"
 #include "rtd.h"
 #include "launch_control.h"
@@ -315,6 +316,9 @@ int main(void)
 	// Initialize launch control system
 	lc_init();
 
+	// Pedal and brake sampling (starts the first conversion)
+	adc_init();
+
 	// Ready-to-drive debounce
 	rtd_init();
 
@@ -371,13 +375,13 @@ int main(void)
 			loop_dt_max_ms = loop_dt_ms;
 		}
 
-		HAL_ADC_Start(ADC_BPS);
-		HAL_ADC_Start(ADC_TPS1);
-		HAL_ADC_Start(ADC_TPS2);
+		/* Non-blocking: latches last tick's conversion, starts the next. */
+		adc_update();
+		tps1_adc = adc_tps1();
+		tps2_adc = adc_tps2();
+		bps_adc = adc_bps();
 
 		// Throttle Position Potentiometer 1 Acquire and Calculate
-		HAL_ADC_PollForConversion(ADC_TPS1, HAL_MAX_DELAY);
-		tps1_adc = HAL_ADC_GetValue(ADC_TPS1);
 		float tps1_v = (float) tps1_adc * ADC_TPS_V_PER_COUNT;
 		tps1 = (tps1_v - TPS1_0PER) / (TPS1_100PER - TPS1_0PER); // Percentage
 		tps1 = fmaxf(tps1, 0);
@@ -389,8 +393,6 @@ int main(void)
 		tps1 = tps1_avg;
 
 		// Throttle Position Potentiometer 2 Acquire and Calculate
-		HAL_ADC_PollForConversion(ADC_TPS2, HAL_MAX_DELAY);
-		tps2_adc = HAL_ADC_GetValue(ADC_TPS2);
 		float tps2_v = (float) tps2_adc * ADC_TPS_V_PER_COUNT;
 		tps2 = (tps2_v - TPS2_0PER) / (TPS2_100PER - TPS2_0PER); // Percentage
 		tps2 = fmaxf(tps2, 0);
@@ -421,8 +423,6 @@ int main(void)
 		}
 
 		// Brake Pressure Acquire and Calculate
-		HAL_ADC_PollForConversion(ADC_BPS, HAL_MAX_DELAY);
-		bps_adc = HAL_ADC_GetValue(ADC_BPS);
 		bps = (float) bps_adc * ADC_BPS_V_PER_COUNT;
 		brake_pressed = bps > BPS_SETPOINT_V;
 

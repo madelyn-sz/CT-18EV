@@ -21,3 +21,6 @@
 /tools/rtd_test
 /tools/adc_test
 /tools/*.dSYM/
+
+# CubeIDE macOS artifact.
+/.osx.project
