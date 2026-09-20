@@ -1,2 +1,2 @@
-# CT-16EV
-Firmware, code and analysis for the CT-16EV
+# CT-18EV
+Firmware for the CT-18EV
