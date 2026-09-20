@@ -74,13 +74,7 @@
 
 /* --- Ready to drive --- */
 
-/* The button is integrated, not timed: each pass with button and brake held
- * adds RISE, every other pass subtracts FALL. Falling faster than it rises
- * means a bouncing input never latches. */
-#define RTD_DEBOUNCE_RISE 3
-#define RTD_DEBOUNCE_FALL 4
-#define RTD_DEBOUNCE_MAX  100
-#define RTD_DEBOUNCE_TRIP 50
+/* Button debounce lives in rtd.h, in milliseconds. */
 
 /* TIM3 ticks, ~10 ms each. */
 #define RTD_BUZZER_TICKS       25
@@ -130,13 +124,6 @@
 
 #define CAN_HEARTBEAT_MASK 0x0F
 
-/* How long the main loop waits for a free transmit mailbox before dropping
- * the frame. */
-#define CAN_MAILBOX_WAIT_MS    15u
-#define CAN_MAILBOX_WAIT_KF_MS 3u
-
-/* Spacing after the inverter command while still in lockout, so the inverter
- * sees a clean command stream before enable is asserted. */
-#define CAN_LOCKOUT_TX_SPACING_MS 10u
+/* Transmit queueing and backpressure live in can_tx.h. */
 
 #endif /* CONFIG_H */

@@ -17,13 +17,20 @@ cd "$(dirname "$0")/.."
 FILES="
 Core/Inc/config.h
 Core/Inc/pinout.h
+Core/Inc/can_tx.h
+Core/Inc/rtd.h
 Core/Inc/launch_control.h
 Core/Inc/regen.h
 Core/Inc/soc_kf.h
 Core/Inc/soc_kf_tables.h
+Core/Src/can_tx.c
+Core/Src/rtd.c
 Core/Src/launch_control.c
 Core/Src/regen.c
 Core/Src/soc_kf.c
+tools/can_tx_test.c
+tools/lc_test.c
+tools/rtd_test.c
 tools/soc_kf_test.c
 "
 
