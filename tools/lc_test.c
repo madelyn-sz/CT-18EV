@@ -99,7 +99,6 @@ static void arm_and_launch(float front_ms)
 {
     set_front(front_ms);
     launch_control_enable = 1;
-    step(1000, 0, 0.0f); /* IDLE -> ARMED */
     step(1000, 0, 0.5f); /* ARMED -> OPENLOOP */
 }
 
@@ -290,7 +289,7 @@ static void test_dt_invariance(void)
         step_dt(2200, spin, 0.5f, 10u);
     }
     const float slip_coarse = dbg.slip_ratio;
-    const float iterm_coarse = dbg.pi_i_term;
+    const float iterm_coarse = dbg.pid_i_term;
 
     lc_reset_all();
     arm_and_launch(front);
@@ -300,7 +299,7 @@ static void test_dt_invariance(void)
         step_dt(2200, spin, 0.5f, 5u);
     }
     const float slip_fine = dbg.slip_ratio;
-    const float iterm_fine = dbg.pi_i_term;
+    const float iterm_fine = dbg.pid_i_term;
 
     printf("    slip  %.4f (10 ms) vs %.4f (5 ms)\n", (double)slip_coarse, (double)slip_fine);
     printf("    Iterm %.2f (10 ms) vs %.2f (5 ms)\n", (double)iterm_coarse, (double)iterm_fine);
@@ -382,16 +381,16 @@ static void test_state_machine(void)
 {
     printf("test_state_machine\n");
 
-    /* Disabled: stays idle however hard the driver presses. */
+    /* Disabled: never leaves ARMED however hard the driver presses. */
     lc_reset_all();
     set_front(10.0f);
     step(1000, 0, 1.0f);
-    check(dbg.state == LC_STATE_IDLE, "stays idle while disabled");
+    check(dbg.state == LC_STATE_ARMED, "stays armed while disabled");
 
     /* Enable arms it. */
     launch_control_enable = 1;
     step(1000, 0, 0.0f);
-    check(dbg.state == LC_STATE_ARMED, "idle -> armed on enable");
+    check(dbg.state == LC_STATE_ARMED, "stays armed on enable");
 
     /* Below the trigger it stays armed. */
     step(1000, 0, LC_THROTTLE_TRIGGER - 0.01f);
@@ -418,7 +417,7 @@ static void test_state_machine(void)
 
     /* Lifting off ends the launch. */
     step(1000, 0, 0.0f);
-    check(dbg.state == LC_STATE_IDLE, "lift off returns to idle");
+    check(dbg.state == LC_STATE_ARMED, "lift off returns to armed");
 
     /* Exit speed ends the launch. */
     lc_reset_all();
@@ -427,7 +426,7 @@ static void test_state_machine(void)
     check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "reached closed loop");
     set_front(LC_EXIT_SPEED_MS + 1.0f);
     step(1000, 0, 0.5f);
-    check(dbg.state == LC_STATE_IDLE, "exit speed returns to idle");
+    check(dbg.state == LC_STATE_ARMED, "exit speed returns to armed");
 
     /* Disabling mid-launch ends it. */
     lc_reset_all();
@@ -435,7 +434,7 @@ static void test_state_machine(void)
     check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "launching before disable");
     launch_control_enable = 0;
     step(1000, 0, 0.5f);
-    check(dbg.state == LC_STATE_IDLE, "disable mid-launch returns to idle");
+    check(dbg.state == LC_STATE_ARMED, "disable mid-launch returns to armed");
 }
 
 static void test_torque_passthrough(void)
@@ -460,17 +459,18 @@ static void test_negative_torque_passthrough(void)
      * through unsigned arithmetic. REGEN_TPS_THRESHOLD and LC_THROTTLE_RELEASE
      * are the same throttle position, so regen can only arrive on a pass where
      * the state machine has already left a launching state: the reachable
-     * cases are idle and armed. The open-loop case below is the guard itself,
-     * proving the early return runs before the per-state torque logic. */
+     * cases are disabled and armed. The open-loop case below is the guard
+     * itself, proving the early return runs before the per-state torque
+     * logic. */
     const int32_t regen = -250;
 
     lc_reset_all();
     set_front(10.0f);
-    check_eq(step(regen, 0, 0.0f), regen, "idle passes regen through");
+    check_eq(step(regen, 0, 0.0f), regen, "regen passes through while disabled");
 
     launch_control_enable = 1;
     step(regen, 0, 0.0f);
-    check_eq(step(regen, 0, 0.0f), regen, "armed passes regen through");
+    check_eq(step(regen, 0, 0.0f), regen, "regen passes through while armed");
 
     lc_reset_all();
     arm_and_launch(1.0f);
@@ -509,7 +509,8 @@ static void test_slip_rate_cut(void)
     printf("test_slip_rate_cut\n");
 
     /* Slip from zero to full in one step exceeds LC_SLIP_RATE_MAX. Front speed
-     * stays below the crossover, so this is the open-loop path. */
+     * stays below the crossover, so this is the open-loop path, which is the
+     * only one that applies the cut; closed loop uses LC_KD. */
     lc_reset_all();
     arm_and_launch(1.0f);
     check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "open loop");
@@ -532,11 +533,11 @@ static void test_slip_rate_cut(void)
     check(dbg.slip_rate_cut == 0, "slip rate cut clears once slip settles");
 }
 
-static void test_pi_behaviour(void)
+static void test_pid_behaviour(void)
 {
-    printf("test_pi_behaviour\n");
+    printf("test_pid_behaviour\n");
 
-    /* Slip above target drives the PI output negative. */
+    /* Slip above target drives the controller output negative. */
     lc_reset_all();
     arm_and_launch(3.0f);
     const uint32_t spin_rpm = ms_to_rpm(6.0f); /* 50% slip */
@@ -547,24 +548,25 @@ static void test_pi_behaviour(void)
         step(2200, spin_rpm, 0.5f);
     }
     check(dbg.slip_ratio > LC_SLIP_TARGET, "slip is above target");
-    check(dbg.pi_output < 0.0f, "PI output is negative above target slip");
+    check(dbg.pid_output < 0.0f, "PID output is negative above target slip");
     check(dbg.lc_torque < 2200, "torque cut below the driver request");
-    check(fabsf(dbg.pi_i_term) <= 2200.0f + 1.0f, "I term clamped to driver torque");
+    check(fabsf(dbg.pid_i_term) <= 2200.0f + 1.0f, "I term clamped to driver torque");
 
     /* Cleared on the same call that leaves closed loop. */
     launch_control_enable = 0;
     check_eq(step(2200, spin_rpm, 0.5f), 2200, "transition call passes torque through");
-    check(dbg.state == LC_STATE_IDLE, "back to idle");
-    check_near(dbg.pi_i_term, 0.0f, 1e-6f, "I term reset on the transition call");
-    check_near(dbg.pi_output, 0.0f, 1e-6f, "PI output reset on the transition call");
-    check_near(dbg.pi_p_term, 0.0f, 1e-6f, "P term reset on the transition call");
+    check(dbg.state == LC_STATE_ARMED, "back to armed");
+    check_near(dbg.pid_i_term, 0.0f, 1e-6f, "I term reset on the transition call");
+    check_near(dbg.pid_output, 0.0f, 1e-6f, "PID output reset on the transition call");
+    check_near(dbg.pid_p_term, 0.0f, 1e-6f, "P term reset on the transition call");
+    check_near(dbg.pid_d_term, 0.0f, 1e-6f, "D term reset on the transition call");
     check(dbg.slip_rate_cut == 0, "slip rate cut cleared on the transition call");
 }
 
-/* Every route into IDLE clears the controller on the transition call. */
-static void test_idle_entry_clears_pi(void)
+/* Every route back to ARMED clears the controller on the transition call. */
+static void test_armed_entry_clears_pid(void)
 {
-    printf("test_idle_entry_clears_pi\n");
+    printf("test_armed_entry_clears_pid\n");
 
     const uint32_t spin_rpm = ms_to_rpm(6.0f);
 
@@ -575,10 +577,11 @@ static void test_idle_entry_clears_pi(void)
         step(2200, spin_rpm, 0.5f);
     }
     check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "closed loop");
-    check(dbg.pi_i_term != 0.0f, "I term wound up");
+    check(dbg.pid_i_term != 0.0f, "I term wound up");
     step(2200, spin_rpm, 0.0f); /* lift off */
-    check(dbg.state == LC_STATE_IDLE, "lift off -> idle");
-    check_near(dbg.pi_i_term, 0.0f, 1e-6f, "lift off clears the I term");
+    check(dbg.state == LC_STATE_ARMED, "lift off -> armed");
+    check_near(dbg.pid_i_term, 0.0f, 1e-6f, "lift off clears the I term");
+    check_near(dbg.pid_d_term, 0.0f, 1e-6f, "lift off clears the D term");
 
     /* Route 2: exceed the exit speed. */
     lc_reset_all();
@@ -586,11 +589,12 @@ static void test_idle_entry_clears_pi(void)
     for (int i = 0; i < 20; i++) {
         step(2200, spin_rpm, 0.5f);
     }
-    check(dbg.pi_i_term != 0.0f, "I term wound up again");
+    check(dbg.pid_i_term != 0.0f, "I term wound up again");
     set_front(LC_EXIT_SPEED_MS + 1.0f);
     step(2200, spin_rpm, 0.5f);
-    check(dbg.state == LC_STATE_IDLE, "exit speed -> idle");
-    check_near(dbg.pi_i_term, 0.0f, 1e-6f, "exit speed clears the I term");
+    check(dbg.state == LC_STATE_ARMED, "exit speed -> armed");
+    check_near(dbg.pid_i_term, 0.0f, 1e-6f, "exit speed clears the I term");
+    check_near(dbg.pid_d_term, 0.0f, 1e-6f, "exit speed clears the D term");
 }
 
 /* Reaching LC_EXIT_SPEED_MS latches, so a launch cannot restart while the car
@@ -605,22 +609,58 @@ static void test_exit_speed_does_not_rearm(void)
     check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "closed loop before the exit");
 
     set_front(25.0f); /* past LC_EXIT_SPEED_MS, driver still flat */
-    int left_idle = 0;
+    int left_armed = 0;
     int trimmed_torque = 0;
     for (int i = 0; i < 40; i++) {
         if (step(2200, ms_to_rpm(25.0f), 0.9f) != 2200) {
             trimmed_torque = 1;
         }
-        if (dbg.state != LC_STATE_IDLE) {
-            left_idle = 1;
+        if (dbg.state != LC_STATE_ARMED) {
+            left_armed = 1;
         }
     }
-    check(!left_idle, "stays idle above exit speed while the throttle is held");
+    check(!left_armed, "stays armed above exit speed while the throttle is held");
     check(!trimmed_torque, "torque passes through untouched after the exit");
 
     /* Lifting releases the latch so the next launch still works. */
     step(0, ms_to_rpm(25.0f), 0.0f);
     check(dbg.state == LC_STATE_ARMED, "re-arms once the driver lifts");
+}
+
+/* The derivative term is the whole closed-loop response to rising slip.
+ * Assertions are directional rather than numeric: LC_KD is tuned against track
+ * data, so only the sign, the decay and the absence of the open-loop cut hold
+ * for every gain. */
+static void test_closed_loop_derivative(void)
+{
+    printf("test_closed_loop_derivative\n");
+
+    lc_reset_all();
+    arm_and_launch(3.0f);
+
+    /* Entering closed loop seeds the slip filter, so the rate the derivative
+     * sees on the first pass is the measured one rather than the filter
+     * settling up from zero. */
+    step(2200, ms_to_rpm(3.3f), 0.9f);
+    check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "closed loop");
+    check_near(dbg.pid_d_term, 0.0f, 1.0f, "no derivative kick on entry");
+
+    for (int i = 0; i < 10; i++) {
+        step(2200, ms_to_rpm(3.3f), 0.9f);
+    }
+    check_near(dbg.pid_d_term, 0.0f, 1.0f, "no derivative term at steady slip");
+
+    const int32_t out = step(2200, ms_to_rpm(6.0f), 0.9f);
+    check(dbg.slip_rate > 0.0f, "slip rate is positive as slip rises");
+    check(dbg.pid_d_term < 0.0f, "derivative term trims torque as slip rises");
+    check(out < 2200, "torque is cut below the driver request as slip rises");
+    check(dbg.slip_rate_cut == 0, "closed loop does not use the slip rate cut");
+
+    for (int i = 0; i < 25; i++) {
+        step(2200, ms_to_rpm(6.0f), 0.9f);
+    }
+    check(fabsf(dbg.pid_d_term) < fabsf(dbg.pid_p_term),
+          "proportional term holds the steady state once slip settles");
 }
 
 int main(void)
@@ -638,8 +678,9 @@ int main(void)
     test_torque_limiting();
     test_slip_rate_cut();
     test_exit_speed_does_not_rearm();
-    test_pi_behaviour();
-    test_idle_entry_clears_pi();
+    test_closed_loop_derivative();
+    test_pid_behaviour();
+    test_armed_entry_clears_pid();
 
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures != 0;

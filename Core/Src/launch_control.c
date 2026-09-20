@@ -78,7 +78,7 @@ static float prev_slip_ratio = 0.0f;
 static uint8_t was_launching = 0;
 
 /* Set when a launch ends by reaching LC_EXIT_SPEED_MS, cleared when the driver
- * lifts. Blocks re-arming so IDLE cannot cycle straight back into a launch
+ * lifts. Blocks re-arming so ARMED cannot cycle straight back into a launch
  * while the car is still above exit speed with the throttle pinned. */
 static uint8_t exit_latched = 0;
 
@@ -106,31 +106,33 @@ static float slip_filter_alpha(float dt)
     return alpha_cache[ms];
 }
 
-static void lc_reset_pi(void)
+static void lc_reset_pid(void)
 {
-    dbg.pi_i_term = 0.0f;
-    dbg.pi_p_term = 0.0f;
-    dbg.pi_output = 0.0f;
+    dbg.pid_i_term = 0.0f;
+    dbg.pid_p_term = 0.0f;
+    dbg.pid_d_term = 0.0f;
+    dbg.pid_output = 0.0f;
     dbg.slip_rate_cut = 0;
 }
 
-/* Clear on the transition, not on the next pass through the IDLE case, so the
- * published PI terms match the published state. */
-static void lc_enter_idle(void)
+/* Clear on the transition, not on the next pass through the ARMED case, so the
+ * published PID terms match the published state. */
+static void lc_enter_armed(void)
 {
-    dbg.state = LC_STATE_IDLE;
-    lc_reset_pi();
+    dbg.state = LC_STATE_ARMED;
+    lc_reset_pid();
 }
 
 void lc_init(void)
 {
-    dbg.state = LC_STATE_IDLE;
+    dbg.state = LC_STATE_ARMED;
     dbg.slip_ratio = 0.0f;
     dbg.slip_ratio_raw = 0.0f;
     dbg.slip_rate = 0.0f;
-    dbg.pi_p_term = 0.0f;
-    dbg.pi_i_term = 0.0f;
-    dbg.pi_output = 0.0f;
+    dbg.pid_p_term = 0.0f;
+    dbg.pid_i_term = 0.0f;
+    dbg.pid_d_term = 0.0f;
+    dbg.pid_output = 0.0f;
     dbg.lc_torque = 0;
     dbg.map_torque = 0;
     dbg.vehicle_speed = 0.0f;
@@ -244,25 +246,15 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
 
     switch (dbg.state) {
 
-    case LC_STATE_IDLE:
-        lc_reset_pi();
+    case LC_STATE_ARMED:
+        lc_reset_pid();
 
         // Lifting off releases the exit latch and allows a fresh launch.
         if (tps_combined < LC_THROTTLE_RELEASE) {
             exit_latched = 0;
         }
 
-        if (launch_control_enable && !exit_latched) {
-            dbg.state = LC_STATE_ARMED;
-        }
-        break;
-
-    case LC_STATE_ARMED:
-        lc_reset_pi();
-
-        if (!launch_control_enable) {
-            lc_enter_idle();
-        } else if (tps_combined >= LC_THROTTLE_TRIGGER) {
+        if (launch_control_enable && !exit_latched && tps_combined >= LC_THROTTLE_TRIGGER) {
             dbg.state = LC_STATE_LAUNCHING_OPENLOOP;
         }
         break;
@@ -270,7 +262,7 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     case LC_STATE_LAUNCHING_OPENLOOP:
 
         if (!launch_control_enable || tps_combined < LC_THROTTLE_RELEASE) {
-            lc_enter_idle();
+            lc_enter_armed();
         }
         // Crossover to closed loop when vehicle speed is reliable
         else if (sensor_ok && v_front > LC_CROSSOVER_SPEED_MS) {
@@ -281,12 +273,12 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     case LC_STATE_LAUNCHING_CLOSEDLOOP:
 
         if (!launch_control_enable || tps_combined < LC_THROTTLE_RELEASE) {
-            lc_enter_idle();
+            lc_enter_armed();
         } else if (v_front > LC_EXIT_SPEED_MS) {
-            /* Latch, or IDLE re-arms on the next pass while the car is still
-             * above exit speed and the driver is still flat. */
+            /* Latch, or ARMED re-arms on the next pass while the car is
+             * still above exit speed and the driver is still flat. */
             exit_latched = 1;
-            lc_enter_idle();
+            lc_enter_armed();
         }
         // Fall back to open-loop if sensor dies
         else if (!sensor_ok) {
@@ -308,7 +300,6 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
 
     switch (dbg.state) {
 
-    case LC_STATE_IDLE:
     case LC_STATE_ARMED:
 
         dbg.map_torque = driver_torque;
@@ -338,34 +329,42 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         //  Negative error: above target slip → reduce torque
         float error = LC_SLIP_TARGET - dbg.slip_ratio;
 
-        dbg.pi_p_term = LC_KP * error;
+        dbg.pid_p_term = LC_KP * error;
+
+        /* Derivative on the measurement rather than the error. The target is
+         * fixed so the two are equivalent today, but this keeps a target
+         * change from kicking the output. Rising slip is a positive slip_rate,
+         * so the term goes negative and trims torque before the proportional
+         * term has had time to build. */
+        dbg.pid_d_term = -LC_KD * dbg.slip_rate;
 
         /* Conditional integration: accumulate only when doing so would not
          * drive the command further into a limit. Saturation is enforced by
          * the output clamp below and nowhere else; a limit written back into
-         * pi_i_term outlives the transient that set it. */
-        float i_candidate = dbg.pi_i_term + LC_KI * error * dt;
-        float cl_candidate = (float)driver_torque + dbg.pi_p_term + i_candidate;
+         * pid_i_term outlives the transient that set it. */
+        float i_candidate = dbg.pid_i_term + LC_KI * error * dt;
+        float cl_candidate =
+            (float)driver_torque + dbg.pid_p_term + dbg.pid_d_term + i_candidate;
 
         if (cl_candidate > (float)driver_torque) {
             if (error < 0.0f) {
-                dbg.pi_i_term = i_candidate;
+                dbg.pid_i_term = i_candidate;
             }
         } else if (cl_candidate < 0.0f) {
             if (error > 0.0f) {
-                dbg.pi_i_term = i_candidate;
+                dbg.pid_i_term = i_candidate;
             }
         } else {
-            dbg.pi_i_term = i_candidate;
+            dbg.pid_i_term = i_candidate;
         }
 
         // Controller output
-        dbg.pi_output = dbg.pi_p_term + dbg.pi_i_term;
+        dbg.pid_output = dbg.pid_p_term + dbg.pid_i_term + dbg.pid_d_term;
 
         /* The driver's request is the operating point and the controller
          * supplies only the deviation from it. The gains are sized for that
          * deviation, so dropping the feedforward means retuning them. */
-        float cl_torque = (float)driver_torque + dbg.pi_output;
+        float cl_torque = (float)driver_torque + dbg.pid_output;
 
         // Clamp the torque values between zero and driver_torque
         if (cl_torque < 0.0f)
@@ -378,13 +377,9 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         int32_t map_t = (int32_t)lc_map_lookup(motor_speed_rpm);
         dbg.map_torque = map_t;
 
-        // Slip rate emergency override
-        if (dbg.slip_rate > LC_SLIP_RATE_MAX) {
-            lc_torque_limit = (int32_t)((float)lc_torque_limit * LC_SLIP_RATE_CUT_MULT);
-            dbg.slip_rate_cut = 1;
-        } else {
-            dbg.slip_rate_cut = 0;
-        }
+        /* No slip-rate cut here: LC_KD covers rising slip continuously, and
+         * the clamp above already lets the controller command zero. */
+        dbg.slip_rate_cut = 0;
         break;
     }
     }

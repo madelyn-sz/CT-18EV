@@ -37,15 +37,25 @@
 #define LC_KP 5000.0f
 #define LC_KI 500.0f
 
+/* Derivative gain, acting on slip rate. At 3 /s it contributes about
+ * -1000 x10Nm, roughly half a typical request. A starting point, not a tuned
+ * value: this needs track data. */
+#define LC_KD 330.0f
+
+/* Hard slip-rate cut, applied in open loop only, where the torque map is the
+ * primary limiter and nothing else responds to slip. Closed loop uses LC_KD,
+ * which covers the same job continuously. */
 #define LC_SLIP_RATE_MAX      3.0f
 #define LC_SLIP_RATE_CUT_MULT 0.5f
 
-// Filter weight at the nominal period. The filter is driven by LC_SLIP_TAU_S;
-// this is what it reduces to when dt == LC_DT_S.
-#define LC_SLIP_FILTER_ALPHA 0.3f
+/* Slip filter time constant, chosen from the signal rather than from a target
+ * weight: the AiM speed is quantised to 0.1 km/h and LC_KD differentiates it,
+ * so it needs smoothing across several passes. 25 ms costs about two passes of
+ * lag. */
+#define LC_SLIP_TAU_S 0.025f
 
-// Slip filter time constant, tau = -LC_DT_S / ln(LC_SLIP_FILTER_ALPHA).
-#define LC_SLIP_TAU_S 0.0083058f
+// What the weight reduces to at the nominal period: expf(-LC_DT_S / LC_SLIP_TAU_S).
+#define LC_SLIP_FILTER_ALPHA 0.670320f
 
 // AiM front wheel speed CAN message timeout (ms).
 #define LC_SENSOR_TIMEOUT_MS 100
@@ -70,7 +80,9 @@
 #define LC_KMH10_TO_MS (1.0f / 36.0f)
 
 typedef enum {
-    LC_STATE_IDLE,
+    /* Resting state: torque passes through, controller held clear, waiting
+     * for the throttle trigger. lc_update() runs only while LC is enabled,
+     * so this state is always armed. */
     LC_STATE_ARMED,
     LC_STATE_LAUNCHING_OPENLOOP,
     LC_STATE_LAUNCHING_CLOSEDLOOP
@@ -82,9 +94,10 @@ typedef struct {
     float slip_ratio_raw;   // Unfiltered slip ratio
     float slip_rate;        // dλ/dt (slip rate of change)
     float dt_s;             // Measured loop period used this pass (s)
-    float pi_p_term;        // Proportional term output
-    float pi_i_term;        // Integral term (accumulated)
-    float pi_output;        // Combined PI output (correction)
+    float pid_p_term;       // Proportional term output
+    float pid_i_term;       // Integral term (accumulated)
+    float pid_d_term;       // Derivative term, acting on slip rate
+    float pid_output;       // Combined PID output (correction)
     int32_t lc_torque;      // Torque limit from LC (×10 units)
     int32_t map_torque;     // Open-loop map torque (×10 units)
     float vehicle_speed;    // Estimated vehicle speed (m/s)
