@@ -34,13 +34,24 @@
 #define LC_SLIP_RATE_MAX      3.0f
 #define LC_SLIP_RATE_CUT_MULT 0.5f
 
+// Filter weight at the nominal period. The filter is driven by LC_SLIP_TAU_S;
+// this is what it reduces to when dt == LC_DT_S.
 #define LC_SLIP_FILTER_ALPHA 0.3f
+
+// Slip filter time constant, tau = -LC_DT_S / ln(LC_SLIP_FILTER_ALPHA).
+#define LC_SLIP_TAU_S 0.0083058f
 
 // AiM front wheel speed CAN message timeout (ms).
 #define LC_SENSOR_TIMEOUT_MS 100
 
-// Assumed control loop period
+// Nominal loop period. Fallback for the first update after a reset; later
+// passes use the measured tick delta.
 #define LC_DT_S 0.010f
+
+// Bounds on the measured period: no divide by zero, no huge integral step
+// after a stall.
+#define LC_DT_MIN_S 0.001f
+#define LC_DT_MAX_S 0.100f
 
 // Precomputed conversion: RPM → m/s = RPM * (2π/60) * tire_radius / gear_ratio
 #define LC_RPM_TO_MS ((2.0f * 3.14159265f / 60.0f) * LC_TIRE_RADIUS_M / LC_GEAR_RATIO)
@@ -61,6 +72,7 @@ typedef struct {
     float slip_ratio;       // Current filtered slip ratio
     float slip_ratio_raw;   // Unfiltered slip ratio
     float slip_rate;        // dλ/dt (slip rate of change)
+    float dt_s;             // Measured loop period used this pass (s)
     float pi_p_term;        // Proportional term output
     float pi_i_term;        // Integral term (accumulated)
     float pi_output;        // Combined PI output (correction)

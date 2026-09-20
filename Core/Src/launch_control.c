@@ -63,6 +63,10 @@ static volatile uint32_t last_wheel_speed_tick = 0;
 // Current system tick, fed from main loop
 static uint32_t current_tick_ms = 0;
 
+// Tick at the previous lc_update(), for the measured loop period.
+static uint32_t last_update_tick = 0;
+static uint8_t have_last_update = 0;
+
 // Debug/telemetry state exposed via lc_get_debug()
 static lc_debug_t dbg;
 
@@ -104,7 +108,10 @@ void lc_init(void)
     dbg.rear_wheel_speed = 0.0f;
     dbg.sensor_healthy = 0;
     dbg.slip_rate_cut = 0;
+    dbg.dt_s = LC_DT_S;
     prev_slip_ratio = 0.0f;
+    last_update_tick = 0;
+    have_last_update = 0;
 }
 
 void lc_feed_wheel_speed(uint16_t front_left_speed_x10, uint16_t front_right_speed_x10)
@@ -134,6 +141,23 @@ lc_state_t lc_get_state(void)
 int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined)
 {
 
+    /* Measured loop period; the slip derivative and integral term are both
+     * per-second. Subtraction is wrap-safe; bounds cover a stall or a double
+     * call. */
+    float dt = LC_DT_S;
+    if (have_last_update) {
+        dt = (float)(current_tick_ms - last_update_tick) * 0.001f;
+    }
+    if (dt < LC_DT_MIN_S) {
+        dt = LC_DT_MIN_S;
+    }
+    if (dt > LC_DT_MAX_S) {
+        dt = LC_DT_MAX_S;
+    }
+    last_update_tick = current_tick_ms;
+    have_last_update = 1;
+    dbg.dt_s = dt;
+
     uint8_t sensor_ok = 1;
     uint32_t elapsed = current_tick_ms - last_wheel_speed_tick;
     // Handle tick wraparound if elapsed is huge, sensor timed out
@@ -159,12 +183,13 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     slip_raw = fmaxf(0.0f, fminf(slip_raw, 1.0f));
     dbg.slip_ratio_raw = slip_raw;
 
-    // Low-pass filter on slip ratio
-    dbg.slip_ratio =
-        dbg.slip_ratio * LC_SLIP_FILTER_ALPHA + slip_raw * (1.0f - LC_SLIP_FILTER_ALPHA);
+    /* Weight derived from the measured period holds the time constant at
+     * LC_SLIP_TAU_S under jitter; at dt == LC_DT_S it is LC_SLIP_FILTER_ALPHA. */
+    const float alpha = expf(-dt / LC_SLIP_TAU_S);
+    dbg.slip_ratio = dbg.slip_ratio * alpha + slip_raw * (1.0f - alpha);
 
     // Slip rate (dlambda/dt)
-    dbg.slip_rate = (dbg.slip_ratio - prev_slip_ratio) / LC_DT_S;
+    dbg.slip_rate = (dbg.slip_ratio - prev_slip_ratio) / dt;
     prev_slip_ratio = dbg.slip_ratio;
 
     switch (dbg.state) {
@@ -257,7 +282,7 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         float error = LC_SLIP_TARGET - dbg.slip_ratio;
 
         dbg.pi_p_term = LC_KP * error;
-        dbg.pi_i_term += LC_KI * error * LC_DT_S;
+        dbg.pi_i_term += LC_KI * error * dt;
 
         // Clamping the I term to -driver_torque to driver_torque
         if (dbg.pi_i_term < -(float)driver_torque) {
