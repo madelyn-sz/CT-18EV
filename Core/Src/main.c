@@ -115,6 +115,8 @@ volatile uint32_t soc_last_tick = 0;
 volatile uint32_t bus_voltage = BUS_VOLTAGE_DEFAULT_V;
 volatile uint8_t inv_message = 0;
 volatile uint16_t ext_frame_count = 0;
+
+/* Worst control period seen, ms. Reported in byte 7 of SOC_KF_CAN_ID_STATE. */
 volatile uint32_t loop_dt_max_ms = 0;
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
@@ -532,6 +534,9 @@ int main(void)
 			{
 				uint8_t kfData[8];
 				soc_kf_pack_state(kfData);
+				/* 0x558 byte 7: worst control loop period in ms, saturating at
+				 * 255. soc_kf_pack_state() owns bytes 0-6. */
+				kfData[7] = (uint8_t)CAP(loop_dt_max_ms, 255u);
 				can_tx_send(SOC_KF_CAN_ID_STATE, kfData, 8);
 			}
 

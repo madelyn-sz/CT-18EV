@@ -69,8 +69,9 @@ void soc_kf_update(uint32_t tick_ms);
 
 const soc_kf_debug_t *soc_kf_get_debug(void);
 
-/* Writes 8 bytes. Current/voltage/temp and Orion SoC are not repeated here -
- * the logger already decodes them from 0x600. */
+/* Writes bytes 0-6. Current/voltage/temp and Orion SoC are not repeated here -
+ * the logger already decodes them from 0x600. Byte 7 belongs to the caller and
+ * is only zeroed here; main.c puts VCU loop health in it. */
 void soc_kf_pack_state(uint8_t *d);
 
 #endif /* SOC_KF_H */

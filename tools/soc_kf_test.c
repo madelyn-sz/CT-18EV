@@ -190,7 +190,7 @@ static void test_packing(void)
 
     check(d[6] == s.dbg.flags, "flags in byte 6");
     check((d[6] & SOC_KF_FLAG_INIT) != 0, "INIT reported");
-    check(d[7] == 0, "byte 7 spare");
+    check(d[7] == 0, "byte 7 zeroed for the caller");
 }
 
 static void test_clamping(void)
