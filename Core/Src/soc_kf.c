@@ -392,5 +392,5 @@ void soc_kf_pack_state(uint8_t *d)
     d[4] = (uint8_t)((uint16_t)ah & 0xFF);
     d[5] = (uint8_t)((uint16_t)ah >> 8);
     d[6] = s.dbg.flags;
-    d[7] = 0;
+    d[7] = 0; /* owned by the caller; zeroed so it is never left undefined */
 }
