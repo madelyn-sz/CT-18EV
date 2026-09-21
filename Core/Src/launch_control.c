@@ -229,8 +229,8 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
      *
      * The weight follows the measured period, holding the time constant at
      * LC_SLIP_TAU_S under jitter; at dt == LC_DT_S it is LC_SLIP_FILTER_ALPHA. */
-    const uint8_t launching = (dbg.state == LC_STATE_LAUNCHING_OPENLOOP ||
-                               dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP);
+    const uint8_t launching =
+        (dbg.state == LC_STATE_LAUNCHING_OPENLOOP || dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP);
     if (launching && was_launching) {
         const float alpha = slip_filter_alpha(dt);
         dbg.slip_ratio = dbg.slip_ratio * alpha + slip_raw * (1.0f - alpha);
@@ -249,12 +249,13 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
     case LC_STATE_ARMED:
         lc_reset_pid();
 
-        // Lifting off releases the exit latch and allows a fresh launch.
-        if (tps_combined < LC_THROTTLE_RELEASE) {
+        // Lifting off below crossover speed releases the exit latch.
+        if (tps_combined < LC_THROTTLE_RELEASE && v_front <= LC_CROSSOVER_SPEED_MS) {
             exit_latched = 0;
         }
 
-        if (launch_control_enable && !exit_latched && tps_combined >= LC_THROTTLE_TRIGGER) {
+        if (launch_control_enable && !exit_latched && v_front <= LC_CROSSOVER_SPEED_MS &&
+            tps_combined >= LC_THROTTLE_TRIGGER) {
             dbg.state = LC_STATE_LAUNCHING_OPENLOOP;
         }
         break;
@@ -267,6 +268,20 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         // Crossover to closed loop when vehicle speed is reliable
         else if (sensor_ok && v_front > LC_CROSSOVER_SPEED_MS) {
             dbg.state = LC_STATE_LAUNCHING_CLOSEDLOOP;
+
+            int32_t map_t = (int32_t)lc_map_lookup(motor_speed_rpm);
+            dbg.map_torque = map_t;
+
+            float error = LC_SLIP_TARGET - dbg.slip_ratio;
+            float p_term = LC_KP * error;
+            float d_term = -LC_KD * dbg.slip_rate;
+
+            float target_i =
+                (float)map_t - (float)driver_torque - p_term - d_term - LC_KI * error * dt;
+            if (target_i > 0.0f) {
+                target_i = 0.0f;
+            }
+            dbg.pid_i_term = target_i;
         }
         break;
 
@@ -343,8 +358,7 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
          * the output clamp below and nowhere else; a limit written back into
          * pid_i_term outlives the transient that set it. */
         float i_candidate = dbg.pid_i_term + LC_KI * error * dt;
-        float cl_candidate =
-            (float)driver_torque + dbg.pid_p_term + dbg.pid_d_term + i_candidate;
+        float cl_candidate = (float)driver_torque + dbg.pid_p_term + dbg.pid_d_term + i_candidate;
 
         if (cl_candidate > (float)driver_torque) {
             if (error < 0.0f) {

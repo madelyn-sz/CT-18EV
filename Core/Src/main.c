@@ -151,7 +151,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 		uint16_t dcl_raw = (uint16_t) (RxData[1] << 8 | RxData[0]);
 		current_limit = (dcl_raw > 3u) ? (uint32_t) (dcl_raw - 3u) : 0u;
 	} else if (RxHeader.StdId == CAN_ID_RX_BMS_STATUS) {
-		soc = RxData[1];
+		soc = BMS_SOC_RAW_TO_PCT(RxData[1]);
 		soc_valid = 1;
 		soc_last_tick = HAL_GetTick();
 		bus_voltage = (RxData[5] << 8 | RxData[4]);
@@ -389,8 +389,8 @@ int main(void)
 
 		// Throttle Position Potentiometer 1 Acquire and Calculate
 		float tps1_v = (float) tps1_adc * ADC_TPS_V_PER_COUNT;
-		tps1 = (tps1_v - TPS1_0PER) / (TPS1_100PER - TPS1_0PER); // Percentage
-		tps1 = fmaxf(tps1, 0);
+		tps1 = (tps1_v - TPS1_0PER) / (TPS1_100PER - TPS1_0PER);
+		tps1 = fmaxf(0.0f, fminf(tps1, 1.0f));
 		tps1_avg =
 				(tps1_avg == 0) ?
 						tps1 :
@@ -400,8 +400,8 @@ int main(void)
 
 		// Throttle Position Potentiometer 2 Acquire and Calculate
 		float tps2_v = (float) tps2_adc * ADC_TPS_V_PER_COUNT;
-		tps2 = (tps2_v - TPS2_0PER) / (TPS2_100PER - TPS2_0PER); // Percentage
-		tps2 = fmaxf(tps2, 0);
+		tps2 = (tps2_v - TPS2_0PER) / (TPS2_100PER - TPS2_0PER);
+		tps2 = fmaxf(0.0f, fminf(tps2, 1.0f));
 		tps2_avg =
 				(tps2_avg == 0) ?
 						tps2 :
@@ -468,8 +468,6 @@ int main(void)
 		// Error States
 		tps1_oor = tps1_v < TPS1_FAULT_LOW || tps1_v > TPS1_FAULT_HIGH;
 		tps2_oor = tps2_v < TPS2_FAULT_LOW || tps2_v > TPS2_FAULT_HIGH;
-		tps1 = fminf(tps1, 100.0f);
-		tps2 = fminf(tps2, 100.0f);
 		tps_dist_error = fabsf(tps1 - tps2) > APPS_TRIP_PERCENT;
 
 		if (!bse_error) {

@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include "../Core/Src/launch_control.c"
 
@@ -97,9 +98,10 @@ static int32_t step(int32_t torque, uint32_t rpm, float tps)
 /* Run up to a launching state at the given front speed. */
 static void arm_and_launch(float front_ms)
 {
-    set_front(front_ms);
+    set_front(0.0f);
     launch_control_enable = 1;
-    step(1000, 0, 0.5f); /* ARMED -> OPENLOOP */
+    step(1000, 0, 0.5f); /* ARMED -> OPENLOOP at standstill */
+    set_front(front_ms);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -315,8 +317,8 @@ static void test_dt_invariance(void)
     lc_reset_all();
     set_front(0.0f);
     arm_and_launch(0.0f);
-    step_dt(1000, 0u, 0.5f, 10u);       /* seed the filter at slip 0 */
-    step_dt(1000, rpm10, 0.5f, 10u);    /* first filtered call, at nominal dt */
+    step_dt(1000, 0u, 0.5f, 10u);    /* seed the filter at slip 0 */
+    step_dt(1000, rpm10, 0.5f, 10u); /* first filtered call, at nominal dt */
     for (uint32_t t = 0; t < settle_ms; t += 10u) {
         step_dt(1000, rpm10, 0.5f, 10u);
     }
@@ -663,6 +665,42 @@ static void test_closed_loop_derivative(void)
           "proportional term holds the steady state once slip settles");
 }
 
+static void test_no_launch_at_speed(void)
+{
+    printf("test_no_launch_at_speed\n");
+    lc_reset_all();
+    launch_control_enable = 1;
+
+    set_front(10.0f);
+    step(1500, ms_to_rpm(10.0f), 0.8f);
+    check(dbg.state == LC_STATE_ARMED, "does not trigger launch while moving at speed");
+    check_eq(step(1500, ms_to_rpm(10.0f), 0.8f), 1500, "torque passes through untouched at speed");
+
+    set_front(0.0f);
+    step(1500, 0, 0.0f);
+    step(1500, 0, 0.8f);
+    check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "triggers launch at standstill");
+}
+
+static void test_bumpless_crossover(void)
+{
+    printf("test_bumpless_crossover\n");
+    lc_reset_all();
+    set_front(0.0f);
+    launch_control_enable = 1;
+    step(2000, 0, 0.8f);
+    check(dbg.state == LC_STATE_LAUNCHING_OPENLOOP, "open loop");
+
+    set_front(1.9f);
+    const int32_t t_open = step(2000, ms_to_rpm(2.11f), 0.8f);
+    check_eq(t_open, dbg.map_torque, "command is map torque in open loop");
+
+    set_front(2.1f);
+    const int32_t t_closed = step(2000, ms_to_rpm(2.33f), 0.8f);
+    check(dbg.state == LC_STATE_LAUNCHING_CLOSEDLOOP, "crossed over to closed loop");
+    check(abs(t_closed - dbg.map_torque) <= 10, "bumpless transfer from open loop to closed loop");
+}
+
 int main(void)
 {
     test_conversions();
@@ -681,6 +719,8 @@ int main(void)
     test_closed_loop_derivative();
     test_pid_behaviour();
     test_armed_entry_clears_pid();
+    test_no_launch_at_speed();
+    test_bumpless_crossover();
 
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures != 0;
