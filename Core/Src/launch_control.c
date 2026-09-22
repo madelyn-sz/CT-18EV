@@ -343,8 +343,7 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
          * the output clamp below and nowhere else; a limit written back into
          * pid_i_term outlives the transient that set it. */
         float i_candidate = dbg.pid_i_term + LC_KI * error * dt;
-        float cl_candidate =
-            (float)driver_torque + dbg.pid_p_term + dbg.pid_d_term + i_candidate;
+        float cl_candidate = dbg.pid_p_term + dbg.pid_d_term + i_candidate;
 
         if (cl_candidate > (float)driver_torque) {
             if (error < 0.0f) {
@@ -361,10 +360,9 @@ int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_com
         // Controller output
         dbg.pid_output = dbg.pid_p_term + dbg.pid_i_term + dbg.pid_d_term;
 
-        /* The driver's request is the operating point and the controller
-         * supplies only the deviation from it. The gains are sized for that
-         * deviation, so dropping the feedforward means retuning them. */
-        float cl_torque = (float)driver_torque + dbg.pid_output;
+        // We may need a feedforward LUT
+        // (vehicle speed, slip ratio) -> torque command
+        float cl_torque = dbg.pid_output;
 
         // Clamp the torque values between zero and driver_torque
         if (cl_torque < 0.0f)
