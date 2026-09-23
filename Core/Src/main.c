@@ -337,6 +337,8 @@ int main(void)
 
 	// SoC Kalman filter (telemetry only - never gates the control path)
 	soc_kf_init();
+	will_eigen_compile();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
