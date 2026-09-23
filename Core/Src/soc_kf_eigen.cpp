@@ -23,4 +23,5 @@ void will_eigen_compile() {
 	};
 
 	auto result = I * x;
+	(void)result;
 }
