@@ -33,6 +33,7 @@ Core/Src/soc_kf.c
 tools/adc_test.c
 tools/can_tx_test.c
 tools/lc_test.c
+tools/regen_test.c
 tools/rtd_test.c
 tools/soc_kf_test.c
 "
