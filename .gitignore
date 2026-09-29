@@ -2,6 +2,7 @@
 # bake in absolute paths, so sharing them breaks other machines.
 /Debug/
 /Release/
+/build/
 
 # Design notes kept locally, deliberately not published.
 /docs/
@@ -24,3 +25,11 @@
 
 # CubeIDE macOS artifact.
 /.osx.project
+
+# VSCode settings
+/.settings/
+/.vscode/
+
+# Build artifacts
+startup_stm32f103xe.s
+STM32F103xx_FLASH.ld
