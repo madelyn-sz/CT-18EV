@@ -29,6 +29,7 @@
 # VSCode settings
 /.settings/
 /.vscode/
+compile_commands.json
 
 # Build artifacts
 startup_stm32f103xe.s

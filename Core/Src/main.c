@@ -31,6 +31,7 @@
 #include "launch_control.h"
 #include "regen.h"
 #include "soc_kf.h"
+#include "cpp_test.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -312,6 +313,11 @@ int main(void)
 	can_tx_init();
 	regen_init();
 	soc_kf_init();
+    
+    // simple test to ensure C++ code can compile and be called
+    // can be removed once using C++ for anything meaningful
+    cpp_test(); 
+    
   /* USER CODE END 2 */
 
   /* Infinite loop */

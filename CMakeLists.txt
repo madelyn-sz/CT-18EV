@@ -28,8 +28,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
+# Enable CMake support for ASM and C/C++ languages
+enable_language(C CXX ASM)
+
+# Set required C++ standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME})
@@ -52,6 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/regen.c
     Core/Src/rtd.c
     Core/Src/soc_kf.c
+    Core/Src/cpp_test.cpp
 )
 
 # Add include paths
