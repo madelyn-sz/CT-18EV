@@ -13,7 +13,15 @@
 extern "C" {
 #endif
 
+// C bridge
+
+struct soc_kf_state;
+
+float get_soc(struct soc_kf_state* state);
+float get_vt(struct soc_kf_state* state);
+
 void will_eigen_compile(void);
+
 
 #ifdef __cplusplus
 }
