@@ -479,7 +479,7 @@ int main(void)
 			TxData[3] = (tps2_adc >> 4) & 0xFF;
 			TxData[4] = (inverter_lockout << 7) | (inverter_enabled << 6)
 					| (tps_dist_error << 5) | (tps2_oor << 4) | (tps1_oor << 3)
-					| (brake_pressed << 2) | (ready_to_drive << 1)
+					| (bse_error << 2) | (ready_to_drive << 1)
 					| should_disable_inverter;
 			TxData[5] = (int) (tps1 * 100) & 0xff;
 			TxData[6] = (int) (tps2 * 100) & 0xff;

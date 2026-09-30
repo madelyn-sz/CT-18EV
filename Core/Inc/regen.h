@@ -13,6 +13,9 @@
 #define REGEN_RAMP_RPM   650u
 #define REGEN_RPM_MAX    6000.0f
 
+/* Regen torque at REGEN_RPM_MAX (Nm) */
+#define REGEN_PEAK_NM 100.0f
+
 /* Latches once KF SoC is below this */
 #define REGEN_SOC_ARM 0.80f
 

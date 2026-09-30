@@ -38,8 +38,8 @@
 
 /* Torque map */
 #define TMAP_DEADBAND_LOW  0.05f
-#define TMAP_REGEN_END     0.28f
-#define TMAP_DRIVE_START   0.32f
+#define TMAP_REGEN_END     0.35f
+#define TMAP_DRIVE_START   0.39f
 #define TMAP_DEADBAND_HIGH 0.95f
 
 /* Max torque limit (0.1 Nm) */
@@ -54,7 +54,7 @@
 #define TORQUE_HIGH_SPEED_NM_X10 300.0f
 
 /* Ready to drive */
-#define RTD_BUZZER_TICKS       25
+#define RTD_BUZZER_TICKS       12
 #define RTD_BUZZER_COUNTER_MAX 100
 
 /* Inverter timeout (TIM3 ticks) */

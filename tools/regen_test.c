@@ -90,13 +90,14 @@ static void test_equation(void)
 {
     printf("test_equation\n");
     int eq_bad = 0, clamp_bad = 0;
-    for (int xi = 0; xi <= 28; xi++) {
+    for (int xi = 0; xi <= 35; xi++) {
         const float x = (float)xi / 100.0f;
         const float p = expected_pedal(x);
 
         for (uint32_t rpm = REGEN_RAMP_RPM; rpm <= 4000; rpm += 50) {
             const float y = (float)rpm / 60.0f;
-            const int32_t want = -(int32_t)(10.0f * p * (2.0f * y - y * y / 100.0f));
+            const int32_t want =
+                -(int32_t)(10.0f * p * (REGEN_PEAK_NM / 100.0f) * (2.0f * y - y * y / 100.0f));
             regen_init();
             if (abs(settle(0, rpm, x, 0.5f, KF_OK) - want) > 1) {
                 eq_bad++;
@@ -128,7 +129,7 @@ static void test_pedal(void)
     check(half >= -219 && half <= -217, "half regen mid pedal");
 
     check_eq(settle(0, RPM, TMAP_REGEN_END, 0.5f, KF_OK), 0, "zero at regen end");
-    check_eq(settle(0, RPM, 0.30f, 0.5f, KF_OK), 0, "zero in coast band");
+    check_eq(settle(0, RPM, 0.37f, 0.5f, KF_OK), 0, "zero in coast band");
     check_eq(settle(0, RPM, 1.1f, 0.5f, KF_OK), 0, "zero at full pedal with no drive");
     check_eq(settle(0, RPM, -0.1f, 0.5f, KF_OK), FULL, "negative tps clamps to full regen");
 }
@@ -193,7 +194,7 @@ static void test_press_out_of_regen(void)
     check_eq(drive, 0, "drive once past drive start");
     check_eq(falling, 0, "torque only rises on press");
     check(jump <= 20, "no torque step on press");
-    check_eq(last, drive_for(0.6f), "full drive map after exit");
+    check_eq(last, drive_for(120.0f * 0.005f), "full drive map after exit");
 }
 
 static void test_partial_lift(void)
@@ -201,8 +202,8 @@ static void test_partial_lift(void)
     printf("test_partial_lift\n");
     regen_init();
     settle(drive_for(0.6f), RPM, 0.6f, 0.5f, KF_OK);
-    check_eq(settle(0, RPM, 0.15f, 0.5f, KF_OK), -247, "partial regen at 15% pedal");
-    check_eq(settle(0, RPM, 0.30f, 0.5f, KF_OK), 0, "coast at 30% pedal");
+    check_eq(settle(0, RPM, 0.15f, 0.5f, KF_OK), -291, "partial regen at 15% pedal");
+    check_eq(settle(0, RPM, 0.37f, 0.5f, KF_OK), 0, "coast at 37% pedal");
     check_eq(settle(drive_for(0.6f), RPM, 0.6f, 0.5f, KF_OK), drive_for(0.6f), "back to drive");
 }
 
@@ -278,35 +279,43 @@ static void test_never_positive(void)
         for (uint32_t rpm = 0; rpm <= 15000; rpm += 125) {
             regen_init();
             const int32_t t = settle(0, rpm, (float)i / 100.0f, 0.5f, KF_OK);
-            if (t > 0 || t < -1000) {
+            if (t > 0 || t < -(int32_t)(10.0f * REGEN_PEAK_NM)) {
                 bad++;
             }
         }
     }
-    check_eq(bad, 0, "regen stays within [-100 Nm, 0]");
+    check_eq(bad, 0, "regen stays within [-peak, 0]");
+}
+
+static void test_peak(void)
+{
+    printf("test_peak\n");
+    regen_init();
+    check_eq(settle_v(0, (uint32_t)REGEN_RPM_MAX, 0.0f, 0.5f, KF_OK, 2000.0f),
+             -(int32_t)(10.0f * REGEN_PEAK_NM), "peak at max rpm without current clamp");
 }
 
 static void test_soc(void)
 {
     printf("test_soc\n");
     regen_init();
-    check_eq(settle(0, RPM, 0.0f, 0.85f, KF_OK), 0, "not armed above 80%");
-    check_eq(settle(0, RPM, 0.0f, 0.80f, KF_OK), 0, "not armed at 80%");
-    check_eq(settle(0, RPM, 0.0f, 0.799f, KF_OK), FULL, "arms below 80%");
-    check_eq(settle(0, RPM, 0.0f, 0.85f, KF_OK), FULL, "stays armed above 80%");
+    check_eq(settle(0, RPM, 0.0f, 0.97f, KF_OK), 0, "not armed above 95%");
+    check_eq(settle(0, RPM, 0.0f, 0.95f, KF_OK), 0, "not armed at 95%");
+    check_eq(settle(0, RPM, 0.0f, 0.949f, KF_OK), FULL, "arms below 95%");
+    check_eq(settle(0, RPM, 0.0f, 0.97f, KF_OK), FULL, "stays armed above 95%");
     check_eq(settle(0, RPM, 0.0f, 1.0f, KF_OK), FULL, "stays armed when full");
 
     regen_init();
-    check_eq(settle(0, RPM, 0.0f, 0.85f, KF_OK), 0, "init disarms");
+    check_eq(settle(0, RPM, 0.0f, 0.97f, KF_OK), 0, "init disarms");
 
     regen_init();
     check_eq(settle(0, RPM, 0.0f, 0.0f, SOC_KF_FLAG_BMS_LIVE), 0, "off before kf init");
-    check_eq(settle(0, RPM, 0.0f, 0.85f, KF_OK), 0, "uninitialised kf does not arm");
+    check_eq(settle(0, RPM, 0.0f, 0.97f, KF_OK), 0, "uninitialised kf does not arm");
 
     regen_init();
     settle(0, RPM, 0.0f, 0.5f, KF_OK);
     check_eq(settle(0, RPM, 0.0f, 0.5f, SOC_KF_FLAG_INIT), 0, "off when bms stale");
-    check_eq(settle(0, RPM, 0.0f, 0.85f, KF_OK), FULL, "back when bms returns");
+    check_eq(settle(0, RPM, 0.0f, 0.97f, KF_OK), FULL, "back when bms returns");
     check_eq(settle(0, RPM, 0.0f, 0.5f, KF_OK | SOC_KF_FLAG_VBAD), 0, "off on bad voltage");
     check_eq(settle(0, RPM, 0.0f, 0.5f, KF_OK | SOC_KF_FLAG_GATED), FULL, "gated is fine");
 }
@@ -391,6 +400,7 @@ int main(void)
     test_speed();
     test_charge_current();
     test_never_positive();
+    test_peak();
     test_soc();
     test_cut();
     test_slew();

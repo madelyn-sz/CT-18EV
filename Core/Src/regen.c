@@ -18,8 +18,11 @@ const regen_debug_t *regen_get_debug(void)
 
 static float pedal_factor(float tps)
 {
-    const float f = (TMAP_REGEN_END - tps) / (TMAP_REGEN_END - TMAP_DEADBAND_LOW);
-    return fmaxf(0.0f, fminf(f, 1.0f));
+    const float u = (TMAP_REGEN_END - tps) / (TMAP_REGEN_END - TMAP_DEADBAND_LOW);
+    const float f = fmaxf(0.0f, fminf(u, 1.0f));
+
+    /* Smoothstep, gentle near foot-off and coast */
+    return f * f * (3.0f - 2.0f * f);
 }
 
 static float max_regen_nm(uint32_t rpm, float v_pack)
@@ -35,7 +38,7 @@ static float max_regen_nm(uint32_t rpm, float v_pack)
     const float charge_limit =
         REGEN_CELL_CHARGE_A * SOC_KF_NP * v_pack / ((float)rpm * RPM_TO_RAD_S);
 
-    return ramp * fminf(2.0f * y - y * y / 100.0f, charge_limit);
+    return ramp * fminf((REGEN_PEAK_NM / 100.0f) * (2.0f * y - y * y / 100.0f), charge_limit);
 }
 
 static int32_t slew(int32_t prev, int32_t target, uint32_t dt_ms)
