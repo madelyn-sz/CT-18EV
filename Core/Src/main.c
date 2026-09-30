@@ -91,8 +91,8 @@ uint8_t RxData[8];
 
 static uint32_t torque_limit = TORQUE_LIMIT_NM_X10;
 volatile uint32_t motor_speed = 0;
+volatile uint32_t motor_speed_tick = 0;
 volatile uint32_t current_limit = CURRENT_LIMIT_DEFAULT_A;
-volatile uint8_t soc = 0;
 volatile uint8_t inverter_enabled = 0;
 volatile uint8_t inverter_lockout = 1;
 volatile uint8_t control_ready = 0;
@@ -105,9 +105,6 @@ volatile uint16_t rtd_timeout = RTD_TIMEOUT_INIT;
 volatile uint8_t rtd_buzzer_counter = 0;
 volatile uint8_t start_disable_debounce = 1;
 volatile uint16_t disable_debounce = DISABLE_DEBOUNCE_INIT;
-
-volatile uint8_t soc_valid = 0;
-volatile uint32_t soc_last_tick = 0;
 
 volatile uint32_t bus_voltage = BUS_VOLTAGE_DEFAULT_V;
 volatile uint8_t inv_message = 0;
@@ -140,13 +137,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 		int16_t motor_speed_raw = (int16_t) (uint16_t) (RxData[3] << 8
 				| RxData[2]);
 		motor_speed = (motor_speed_raw > 0) ? (uint32_t) motor_speed_raw : 0u;
+		motor_speed_tick = HAL_GetTick();
 	} else if (RxHeader.StdId == CAN_ID_RX_BMS_DCL) {
 		uint16_t dcl_raw = (uint16_t) (RxData[1] << 8 | RxData[0]);
 		current_limit = (dcl_raw > 3u) ? (uint32_t) (dcl_raw - 3u) : 0u;
 	} else if (RxHeader.StdId == CAN_ID_RX_BMS_STATUS) {
-		soc = BMS_SOC_RAW_TO_PCT(RxData[1]);
-		soc_valid = 1;
-		soc_last_tick = HAL_GetTick();
 		bus_voltage = (RxData[5] << 8 | RxData[4]);
 		soc_kf_feed_bms((int16_t) (uint16_t) (RxData[7] << 8 | RxData[6]),
 				(uint16_t) (RxData[5] << 8 | RxData[4]), RxData[2], RxData[1],
@@ -176,11 +171,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	}
 }
 
-/* Map raw TPS to 0..1 range across deadband */
+/* Map raw TPS to 0..1 across the drive range */
 static float tmap_lut(float tps) {
-	return (fmaxf(TMAP_DEADBAND_LOW, fminf(tps, TMAP_DEADBAND_HIGH))
-			- TMAP_DEADBAND_LOW)
-			* (1.0f / (TMAP_DEADBAND_HIGH - TMAP_DEADBAND_LOW));
+	return (fmaxf(TMAP_DRIVE_START, fminf(tps, TMAP_DEADBAND_HIGH))
+			- TMAP_DRIVE_START)
+			* (1.0f / (TMAP_DEADBAND_HIGH - TMAP_DRIVE_START));
 }
 
 /* Map TPS to torque request (0.1 Nm), capped by DC current limit */
@@ -380,22 +375,6 @@ int main(void)
 		tps2 = tps2_avg;
 
 		tps_combined = (tps1 + tps2) / 2;
-		torque_request = torque_lut(tmap_lut(tps_combined));
-
-		uint8_t bms_fresh = soc_valid
-				&& ((HAL_GetTick() - soc_last_tick) < BMS_TIMEOUT_MS);
-		torque_request = regen_update(torque_request, motor_speed, tps_combined,
-				brake_pressed, soc, bms_fresh);
-
-		lc_feed_tick(HAL_GetTick());
-		if (launch_control_enable) {
-			torque_request = lc_update(torque_request, motor_speed,
-					tps_combined);
-			lc_was_enabled = 1;
-		} else if (lc_was_enabled) {
-			lc_init();
-			lc_was_enabled = 0;
-		}
 
 		bps = (float) bps_adc * ADC_BPS_V_PER_COUNT;
 		brake_pressed = bps > BPS_SETPOINT_V;
@@ -439,6 +418,27 @@ int main(void)
 		should_disable_inverter = (disable_debounce > DISABLE_DEBOUNCE_TRIP)
 				|| !ready_to_drive;
 
+		torque_request = torque_lut(tmap_lut(tps_combined));
+
+		const soc_kf_debug_t *kf = soc_kf_get_debug();
+		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)
+				> (int32_t) MOTOR_SPEED_TIMEOUT_MS;
+		const uint8_t regen_cut = brake_pressed || start_disable_debounce
+				|| should_disable_inverter || speed_stale
+				|| launch_control_enable;
+		torque_request = regen_update(torque_request, motor_speed, tps_combined,
+				kf, regen_cut, loop_dt_ms);
+
+		lc_feed_tick(HAL_GetTick());
+		if (launch_control_enable) {
+			torque_request = lc_update(torque_request, motor_speed,
+					tps_combined);
+			lc_was_enabled = 1;
+		} else if (lc_was_enabled) {
+			lc_init();
+			lc_was_enabled = 0;
+		}
+
 		if (should_disable_inverter) {
 			torque_request = 0;
 		}
@@ -479,7 +479,7 @@ int main(void)
 			TxData[3] = (tps2_adc >> 4) & 0xFF;
 			TxData[4] = (inverter_lockout << 7) | (inverter_enabled << 6)
 					| (tps_dist_error << 5) | (tps2_oor << 4) | (tps1_oor << 3)
-					| (brake_pressed << 2) | (ready_to_drive << 1)
+					| (bse_error << 2) | (ready_to_drive << 1)
 					| should_disable_inverter;
 			TxData[5] = (int) (tps1 * 100) & 0xff;
 			TxData[6] = (int) (tps2 * 100) & 0xff;
@@ -498,6 +498,9 @@ int main(void)
 				kfData[7] = (uint8_t)CAP(loop_dt_max_ms, 255u);
 				can_tx_send(SOC_KF_CAN_ID_STATE, kfData, 8);
 			}
+
+			regen_pack_debug(TxData);
+			can_tx_send(REGEN_DEBUG_CAN_ID, TxData, 7);
 
 			print_ready = 0;
 		}

@@ -25,20 +25,22 @@
 #define TPS2_FAULT_HIGH 2.8f
 
 /* Max APPS disagreement (FSAE T.4.2.4) */
-#define APPS_TRIP_PERCENT 0.70f
+#define APPS_TRIP_PERCENT 0.10f
 
 /* TPS filter weight (0 = disabled) */
 #define TPS_IIR_RATIO 0.0f
 
 /* Brake pressure (BPS) and brake plausibility (BSE) */
-#define BPS_SETPOINT_V 0.500f
+#define BPS_SETPOINT_V 0.700f
 
 #define BSE_TRIP_TPS  0.10f
 #define BSE_CLEAR_TPS 0.05f
 
 /* Torque map */
-#define TMAP_DEADBAND_LOW  0.03f
-#define TMAP_DEADBAND_HIGH 0.97f
+#define TMAP_DEADBAND_LOW  0.05f
+#define TMAP_REGEN_END     0.35f
+#define TMAP_DRIVE_START   0.39f
+#define TMAP_DEADBAND_HIGH 0.95f
 
 /* Max torque limit (0.1 Nm) */
 #define TORQUE_LIMIT_NM_X10 2200u
@@ -52,7 +54,7 @@
 #define TORQUE_HIGH_SPEED_NM_X10 300.0f
 
 /* Ready to drive */
-#define RTD_BUZZER_TICKS       25
+#define RTD_BUZZER_TICKS       12
 #define RTD_BUZZER_COUNTER_MAX 100
 
 /* Inverter timeout (TIM3 ticks) */
@@ -65,12 +67,10 @@
 #define DISABLE_DEBOUNCE_MAX  100
 #define DISABLE_DEBOUNCE_INIT 999
 
-/* BMS */
-#define BMS_TIMEOUT_MS 200u
+#define MOTOR_SPEED_TIMEOUT_MS 200u
 
 /* Orion SoC: 0.5%/bit */
-#define BMS_SOC_PCT_PER_BIT     0.5f
-#define BMS_SOC_RAW_TO_PCT(raw) ((uint8_t)(((uint16_t)(raw) + 1u) / 2u))
+#define BMS_SOC_PCT_PER_BIT 0.5f
 
 /* Defaults before BMS/inverter comms */
 #define CURRENT_LIMIT_DEFAULT_A 125u

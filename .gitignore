@@ -20,6 +20,7 @@
 /tools/can_tx_test
 /tools/rtd_test
 /tools/adc_test
+/tools/regen_test
 /tools/*.dSYM/
 
 # CubeIDE macOS artifact.
