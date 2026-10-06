@@ -1,49 +1,47 @@
-/**
- * @file    regen.h
- * @brief   Regenerative braking torque on a closed throttle.
- *
- * While coasting above the cutoff with a healthy, non-full pack, the driver
- * request is replaced by a braking torque that ramps down to
- * REGEN_TORQUE_AT_CUTOFF as the car slows, so it does not step on dropout.
- * No HAL dependency, so it is testable on the host.
- */
-
 #ifndef REGEN_H
 #define REGEN_H
 
 #include <stdint.h>
 
-#define REGEN_TPS_THRESHOLD 0.05f
+#include "soc_kf.h"
 
-/* Regen releases below this motor speed */
+#define REGEN_DEBUG_CAN_ID 0x559
+
+#define REGEN_CELL_CHARGE_A 25.0f
+
 #define REGEN_CUTOFF_RPM 500u
+#define REGEN_RAMP_RPM   650u
+#define REGEN_RPM_MAX    6000.0f
 
-/* Below this entry speed there is not enough range above the cutoff for a
- * useful ramp */
-#define REGEN_MIN_RAMP_RPM 550u
+/* Regen torque at REGEN_RPM_MAX (Nm) */
+#define REGEN_PEAK_NM 100.0f
 
-/* Regen is inhibited above this pack SoC */
-#define REGEN_MAX_SOC_PERCENT 80u
+/* Latches once KF SoC is below this */
+#define REGEN_SOC_ARM 0.80f
 
-/* Braking torque, Nm x10, always negative. Effort is highest at the cutoff
- * speed and lowest at the speed regen engaged. Formerly MIN_REGEN_TORQUE and
- * MAX_REGEN_TORQUE in main.c. */
-#define REGEN_TORQUE_AT_ENTRY  (-200)
-#define REGEN_TORQUE_AT_CUTOFF (-250)
+/* Slew below BAND (0.1 Nm), rates in 0.1 Nm/ms */
+#define REGEN_SLEW_BAND 100
+#define REGEN_SLEW_UP   15
+#define REGEN_SLEW_DOWN 20
+#define REGEN_DT_MAX_MS 10u
 
 typedef struct {
-    uint8_t active;           /* 1 = regen is driving the torque request   */
-    uint32_t entry_speed_rpm; /* highest speed seen this regen event       */
-    int32_t torque;           /* last regen torque applied, Nm x10         */
+    float pedal;
+    float max_nm;
+    int32_t target;
+    int32_t torque;
+    uint8_t cut;
+    uint8_t soc_ok;
+    uint8_t armed;
 } regen_debug_t;
 
 void regen_init(void);
 
-/* Returns the torque to command, Nm x10: negative while regen is active,
- * otherwise driver_torque unchanged. bms_live gates the soc_percent input. */
-int32_t regen_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined,
-                     uint8_t brake_pressed, uint8_t soc_percent, uint8_t bms_live);
+/* Returns commanded torque (0.1 Nm) */
+int32_t regen_update(int32_t drive_torque, uint32_t motor_speed_rpm, float tps,
+                     const soc_kf_debug_t *kf, uint8_t cut, uint32_t dt_ms);
 
 const regen_debug_t *regen_get_debug(void);
+void regen_pack_debug(uint8_t *d);
 
 #endif /* REGEN_H */

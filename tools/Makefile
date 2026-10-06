@@ -10,7 +10,7 @@ CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -I../Core/Inc
 LDLIBS   = -lm
 
-TESTS = soc_kf_test lc_test can_tx_test rtd_test adc_test
+TESTS = soc_kf_test lc_test can_tx_test rtd_test adc_test regen_test
 
 .PHONY: all test clean
 all: test
@@ -40,6 +40,9 @@ rtd_test: rtd_test.c ../Core/Src/rtd.c ../Core/Inc/rtd.h
 # can_tx reaches the HAL for the mailboxes; CAN_TX_HOST swaps in a fake one.
 can_tx_test: can_tx_test.c ../Core/Src/can_tx.c ../Core/Inc/can_tx.h
 	$(CC) $(CFLAGS) -DCAN_TX_HOST -o $@ can_tx_test.c $(LDLIBS)
+
+regen_test: regen_test.c ../Core/Src/regen.c ../Core/Inc/regen.h ../Core/Inc/config.h ../Core/Inc/soc_kf.h
+	$(CC) $(CFLAGS) -o $@ regen_test.c $(LDLIBS)
 
 clean:
 	rm -rf $(TESTS) *.dSYM

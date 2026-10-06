@@ -1,9 +1,7 @@
-/* Non-blocking pedal and brake sampling. Builds for the host tests with
- * -DADC_HOST. */
+/* Non-blocking pedal and brake sampling */
 
 #include "adc.h"
 
-/* Written by the DMA, read by the control loop. */
 static volatile uint32_t dual_raw; /* ADC1 in [15:0], ADC2 in [31:16] */
 static volatile uint16_t bps_raw;
 static volatile uint8_t dual_done;
@@ -18,7 +16,6 @@ static uint16_t overrun_count;
 
 #ifdef ADC_HOST
 
-/* Host build: the test writes dual_raw/bps_raw and the done flags itself. */
 uint32_t adc_host_arm_count;
 uint32_t adc_host_calibrate_count;
 uint32_t adc_host_armed_before_calibration;
@@ -41,9 +38,6 @@ static void adc_arm(void)
 #include "main.h"
 #include "pinout.h"
 
-/* Corrects each converter's manufacturing offset; the datasheet accuracy
- * figures assume it has been done. Must run after the converters are
- * configured and before any conversion starts. ~10 us each. */
 static void adc_calibrate(void)
 {
     if (HAL_ADCEx_Calibration_Start(ADC_TPS1) != HAL_OK) {
@@ -59,17 +53,14 @@ static void adc_calibrate(void)
 
 static void adc_arm(void)
 {
-	/* Start ADC2 before calling MultiModeStart to set ADC2 as slave to ADC 1 */
-	if (HAL_ADC_Start(ADC_TPS2) != HAL_OK) {
-		HAL_ADC_Stop(ADC_TPS2);
-		err_count+=1;
-	};
+    /* Set EXTTRIG on slave ADC2 */
+    if (HAL_ADC_Start(ADC_TPS2) != HAL_OK) {
+        (void)HAL_ADC_Stop(ADC_TPS2);
+        err_count++;
+    }
 
-    /* ADC2 is enabled and triggered by the master; it needs no start of its
-     * own and has no DMA channel to start. */
+    /* ADC1+ADC2 dual regular DMA */
     if (HAL_ADCEx_MultiModeStart_DMA(ADC_TPS1, (uint32_t *)&dual_raw, 1u) != HAL_OK) {
-        /* Previous conversion never completed; tear down so the next tick can
-         * arm cleanly. */
         (void)HAL_ADCEx_MultiModeStop_DMA(ADC_TPS1);
         err_count++;
     }
@@ -111,13 +102,21 @@ void adc_init(void)
     have_samples = 0u;
     overrun_count = 0u;
 
-    /* Calibration must complete before the first conversion. */
     adc_calibrate();
     adc_arm();
 }
 
 void adc_update(void)
 {
+#ifndef ADC_HOST
+    dual_done = 0u;
+    bps_done = 0u;
+    adc_arm();
+    uint32_t timeout = 5000u;
+    while ((!dual_done || !bps_done) && --timeout) {
+    }
+#endif
+
     if (dual_done && bps_done) {
         const uint32_t dual = dual_raw;
         tps1_latched = (uint16_t)(dual & 0xFFFFu);
@@ -125,13 +124,15 @@ void adc_update(void)
         bps_latched = bps_raw;
         have_samples = 1u;
     } else if (have_samples) {
-        /* Hold the previous readings rather than publish a partial conversion. */
+        /* Hold previous on overrun */
         overrun_count++;
     }
 
+#ifdef ADC_HOST
     dual_done = 0u;
     bps_done = 0u;
     adc_arm();
+#endif
 }
 
 uint16_t adc_tps1(void)
