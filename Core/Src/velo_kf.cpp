@@ -8,43 +8,10 @@
 #include "velo_kf.h"
 #include "main.h"
 #include "config.h"
-#include "Eigen/Core"
 
 #include <cstdlib>
 #include <cstdint>
 #include <algorithm>
-
-constexpr int N_STATES = 2;
-constexpr int N_MEASUREMENTS = 1;
-
-// States are x = [v_long, a_bias]
-// TODO: Tune filter!!
-
-Eigen::Matrix<float, N_STATES, N_STATES> Q {
-	{0, 0},
-	{0, 0}
-};
-
-Eigen::Matrix<float, N_STATES, N_STATES> R {
-	{0, 0},
-	{0, 0}
-};
-
-// Acceleration integrates into velocity, state update doesn't inform bias
-Eigen::Matrix<float, N_STATES, N_STATES> A {
-	{0, -1},
-	{0, 0}
-};
-
-Eigen::Matrix<float, N_STATES, N_MEASUREMENTS> B {
-	{1},
-	{0}
-};
-
-Eigen::Matrix<float, N_MEASUREMENTS, N_STATES> H {
-	{1},
-	{0}
-};
 
 enum calibration_status {
 	CALIBRATION_IDLE,
@@ -72,13 +39,6 @@ struct velo_kf_calibration {
 
 struct velo_kf_state {
 	int16_t accel_x_raw = 0;
-
-	Eigen::Vector<float, N_STATES> x;
-	Eigen::Matrix<float, N_STATES, N_STATES> P;
-
-	void update(float tps_combined) {
-
-	}
 };
 
 static velo_kf_calibration c;
