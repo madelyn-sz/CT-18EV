@@ -29,7 +29,8 @@ extern "C" {
 #define ACCEL_MAX_PLAUSIBLE_OFFSET 1
 
 // max offset we can read and assume we are on mostly level ground
-#define ACCEL_SLOPE_TOL_MS2_X1000 9000
+// computed from m/s^2 on a 0.5deg slope
+#define ACCEL_SLOPE_TOL_MS2_X1000 86
 
 #define MOTOR_RPM_THRESHOLD_STILL 5
 #define WHEEL_SPEED_THRESHOLD_STILL 1

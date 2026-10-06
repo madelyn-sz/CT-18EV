@@ -51,7 +51,7 @@ void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t w
 	c.rtd_curr = rtd;
 }
 
-// TODO: timeout on no accel frames, safeguard against gravity contamination in calibration
+// TODO: timeout on no accel frames
 
 void feed_velo_kf_accel(int16_t accel_x_raw) {
 	bool rtd_rising = c.rtd_curr && !c.rtd_prev;
