@@ -46,12 +46,16 @@ struct velo_kf_state {
 static velo_kf_calibration c;
 static velo_kf_state s;
 
+// TODO: This should really use the launch control switch instead of RTD
+// change as soon as physical launch control switch is installed
 void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed) {
 	c.inputs_ok = tps < TPS_THRESHOLD_OFF && motor_rpm < MOTOR_RPM_THRESHOLD_STILL && wheel_speed < WHEEL_SPEED_THRESHOLD_STILL;
 	c.rtd_curr = rtd;
 }
 
 // TODO: Calibrate offset on level ground!!
+// TODO: Tune max noise and max offset thresholds!!
+
 // TODO: timeout on no accel frames
 // TODO: send debug frame for different calibration failure causes
 // TODO: expose flag status to downstream code
@@ -81,6 +85,7 @@ void feed_velo_kf_accel(int16_t accel_x_raw) {
 		if (accel_x_raw > c.max_reading) c.max_reading = accel_x_raw;
 		if (accel_x_raw < c.min_reading) c.min_reading = accel_x_raw;
 
+		// fail calibration if readings are likely contaminated by movement
 		if (!c.inputs_ok || (c.max_reading - c.min_reading) > ACCEL_MAX_PLAUSIBLE_NOISE) {
 			c.flag_status = CALIBRATION_FAILED;
 		} else {

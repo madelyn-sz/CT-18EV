@@ -26,7 +26,7 @@ extern "C" {
 #define ACCEL_MAX_PLAUSIBLE_NOISE 0.01f
 
 // max plausible static offset
-#define ACCEL_MAX_PLAUSIBLE_OFFSET 1
+#define ACCEL_MAX_PLAUSIBLE_OFFSET 1000
 
 // max offset we can read and assume we are on mostly level ground
 // computed from m/s^2 on a 0.5deg slope
