@@ -81,10 +81,14 @@
 #define CAN_ID_RX_MOTOR_SPEED    0x0A5
 #define CAN_ID_RX_BMS_DCL        0x202
 #define CAN_ID_RX_BMS_STATUS     0x600
+#define CAN_ID_RX_AIM_ACCEL 0x301
+#define CAN_ID_RX_AIM_GYRO 0x302
 
 #define CAN_ID_TX_INVERTER_CMD 0x0C0
 #define CAN_ID_TX_DEBUG        0x555
 #define CAN_ID_TX_RTD          0x556
+#define CAN_ID_TX_AIM_ACCEL 0x601
+#define CAN_ID_TX_AIM_GYRO 0x602
 
 #define CAN_STID_MASK_HIGH 0xFFE0
 #define CAN_STID_MASK_LOW  0x0004

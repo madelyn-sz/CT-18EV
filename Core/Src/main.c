@@ -31,7 +31,6 @@
 #include "launch_control.h"
 #include "regen.h"
 #include "soc_kf.h"
-#include "soc_kf_eigen.h"
 
 /* USER CODE END Includes */
 
@@ -94,6 +93,15 @@ uint8_t RxData[8];
 static uint32_t torque_limit = TORQUE_LIMIT_NM_X10;
 volatile uint32_t motor_speed = 0;
 volatile uint32_t motor_speed_tick = 0;
+
+volatile int16_t accel_x_raw = 0;
+volatile int16_t accel_y_raw = 0;
+volatile int16_t accel_z_raw = 0;
+
+volatile int16_t gyro_x_raw = 0;
+volatile int16_t gyro_y_raw = 0;
+volatile int16_t gyro_z_raw = 0;
+
 volatile uint32_t current_limit = CURRENT_LIMIT_DEFAULT_A;
 volatile uint8_t inverter_enabled = 0;
 volatile uint8_t inverter_lockout = 1;
@@ -151,6 +159,14 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	} else if (RxHeader.StdId == LC_AIM_WHEEL_SPEED_CAN_ID) {
 		uint16_t fl_speed = RxData[1] << 8 | RxData[0];
 		lc_feed_wheel_speed(fl_speed);
+	} else if (RxHeader.StdId == CAN_ID_RX_AIM_ACCEL) {
+		accel_x_raw = (int16_t)(((uint16_t)RxData[1] << 8) | RxData[0]);
+		accel_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
+		accel_z_raw = (int16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
+	} else if (RxHeader.StdId == CAN_ID_RX_AIM_GYRO) {
+		gyro_x_raw = (int16_t)(((uint16_t)RxData[1] << 8) | RxData[0]);
+		gyro_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
+		gyro_z_raw = (int16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
 	}
 }
 
@@ -295,6 +311,29 @@ int main(void)
 	canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
 	HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
 
+	canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
+	canfilterconfig.FilterBank = 7; /* AiM Accelerometer */
+	canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+	canfilterconfig.FilterIdHigh = CAN_ID_RX_AIM_ACCEL << 5;
+	canfilterconfig.FilterIdLow = 0;
+	canfilterconfig.FilterMaskIdHigh = CAN_STID_MASK_HIGH;
+	canfilterconfig.FilterMaskIdLow = CAN_STID_MASK_LOW;
+	canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
+	canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
+	HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
+
+	canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
+	canfilterconfig.FilterBank = 8; /* AiM Gyroscope */
+	canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+	canfilterconfig.FilterIdHigh = CAN_ID_RX_AIM_GYRO << 5;
+	canfilterconfig.FilterIdLow = 0;
+	canfilterconfig.FilterMaskIdHigh = CAN_STID_MASK_HIGH;
+	canfilterconfig.FilterMaskIdLow = CAN_STID_MASK_LOW;
+	canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
+	canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
+	HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
+
+
 	HAL_CAN_Start(&hcan);
 
 	if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING)
@@ -308,9 +347,6 @@ int main(void)
 	can_tx_init();
 	regen_init();
 	soc_kf_init();
-
-	// test if code using Eigen compiles
-	will_eigen_compile();
 
   /* USER CODE END 2 */
 
@@ -502,6 +538,37 @@ int main(void)
 				soc_kf_pack_state(kfData);
 				kfData[7] = (uint8_t)CAP(loop_dt_max_ms, 255u);
 				can_tx_send(SOC_KF_CAN_ID_STATE, kfData, 8);
+			}
+
+			// Accelerometer and gyroscope debug frame
+			// Note that logging here downsamples to ~10hz compared to the 100hz transmission
+			// not sure if it's an issue
+			{
+				uint8_t accelData[8];
+
+				accelData[0] = accel_x_raw & 0xFF;
+				accelData[1] = (accel_x_raw >> 8) & 0xFF;
+				accelData[2] = accel_y_raw & 0xFF;
+				accelData[3] = (accel_y_raw >> 8) & 0xFF;
+				accelData[4] = accel_z_raw & 0xFF;
+				accelData[5] = (accel_z_raw >> 8) & 0xFF;
+				accelData[6] = 0x00;
+				accelData[7] = 0x00;
+
+				can_tx_send(CAN_ID_TX_AIM_ACCEL, accelData, 8);
+
+				uint8_t gyroData[8];
+
+				gyroData[0] = gyro_x_raw & 0xFF;
+				gyroData[1] = (gyro_x_raw >> 8) & 0xFF;
+				gyroData[2] = gyro_y_raw & 0xFF;
+				gyroData[3] = (gyro_y_raw >> 8) & 0xFF;
+				gyroData[4] = gyro_z_raw & 0xFF;
+				gyroData[5] = (gyro_z_raw >> 8) & 0xFF;
+				gyroData[6] = 0x00;
+				gyroData[7] = 0x00;
+
+				can_tx_send(CAN_ID_TX_AIM_GYRO, gyroData, 8);
 			}
 
 			regen_pack_debug(TxData);
