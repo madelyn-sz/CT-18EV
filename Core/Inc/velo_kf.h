@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-// theshold for throttle unpressed
+// threshold for throttle not depressed
 #define TPS_THRESHOLD_OFF 0.05f
 
 // threshold for brake being pressed
@@ -27,6 +27,12 @@ extern "C" {
 
 // max plausible static offset
 #define ACCEL_MAX_PLAUSIBLE_OFFSET 1
+
+// max offset we can read and assume we are on mostly level ground
+#define ACCEL_SLOPE_TOL_MS2_X1000 9000
+
+#define MOTOR_RPM_THRESHOLD_STILL 5
+#define WHEEL_SPEED_THRESHOLD_STILL 1
 
 void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed);
 void feed_velo_kf_accel(int16_t raw_accel_x);

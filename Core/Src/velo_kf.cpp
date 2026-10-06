@@ -32,7 +32,9 @@ struct velo_kf_calibration {
 	int16_t min_reading = INT16_MAX;
 	int16_t max_reading = INT16_MIN;
 
-	int16_t offset_static = 0;
+	// TODO: calibrate this based on shop stationary readings
+	int32_t offset_level = 0;
+	int32_t offset_static = 0;
 	int32_t offset_calibration_sum = 0;
 	uint16_t offset_calibration_samples = 0;
 };
@@ -44,10 +46,8 @@ struct velo_kf_state {
 static velo_kf_calibration c;
 static velo_kf_state s;
 
-// should also require motor rpm = 0
-
 void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed) {
-	c.inputs_ok = tps < TPS_THRESHOLD_OFF && motor_rpm == 0 && wheel_speed == 0;
+	c.inputs_ok = tps < TPS_THRESHOLD_OFF && motor_rpm < MOTOR_RPM_THRESHOLD_STILL && wheel_speed < WHEEL_SPEED_THRESHOLD_STILL;
 	c.rtd_curr = rtd;
 }
 
@@ -86,12 +86,15 @@ void feed_velo_kf_accel(int16_t accel_x_raw) {
 
 			if (c.offset_calibration_samples >= OFFSET_CALIBRATION_SAMPLES) {
 				int32_t candidate_offset =  c.offset_calibration_sum / c.offset_calibration_samples;
+				int32_t offset_deviation = candidate_offset - c.offset_level;
 
-				if (std::abs(candidate_offset) <= ACCEL_MAX_PLAUSIBLE_OFFSET) {
+				// check that the computed offset is reasonable, and that it does not indicate we on unlevel ground
+				if (std::abs(candidate_offset) <= ACCEL_MAX_PLAUSIBLE_OFFSET && std::abs(offset_deviation) <= ACCEL_SLOPE_TOL_MS2_X1000) {
 					c.flag_status = CALIBRATION_SUCCEDED;
 					c.offset_static = candidate_offset;
 				} else {
 					c.flag_status = CALIBRATION_FAILED;
+					c.offset_static = c.offset_level;
 				}
 			}
 		}
