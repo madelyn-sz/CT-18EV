@@ -46,10 +46,12 @@ static velo_kf_state s;
 
 // should also require motor rpm = 0
 
-void upkeep_velo_kf_accel(uint8_t rtd, float tps, float bps) {
-	c.inputs_ok = tps < TPS_THRESHOLD_OFF && bps > BPS_THRESHOLD_ON;
+void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed) {
+	c.inputs_ok = tps < TPS_THRESHOLD_OFF && motor_rpm == 0 && wheel_speed == 0;
 	c.rtd_curr = rtd;
 }
+
+// TODO: timeout on no accel frames, safeguard against gravity contamination in calibration
 
 void feed_velo_kf_accel(int16_t accel_x_raw) {
 	bool rtd_rising = c.rtd_curr && !c.rtd_prev;

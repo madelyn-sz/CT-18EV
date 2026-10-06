@@ -464,7 +464,8 @@ int main(void)
 
 		torque_request = torque_lut(tmap_lut(tps_combined));
 
-		upkeep_velo_kf_accel(ready_to_drive, tps_combined, bps);
+		// TODO: Once wheel speed sensors are added, pass wheel speed instead of zero
+		upkeep_velo_kf_accel(ready_to_drive, tps_combined, motor_speed, 0);
 
 		const soc_kf_debug_t *kf = soc_kf_get_debug();
 		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)

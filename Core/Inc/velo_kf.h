@@ -20,7 +20,7 @@ extern "C" {
 #define BPS_THRESHOLD_ON 0.7f
 
 // number of samples to collect before completing calibration
-#define OFFSET_CALIBRATION_SAMPLES 100
+#define OFFSET_CALIBRATION_SAMPLES 50
 
 // max accelerometer readings that could plausibly be explained by noise
 #define ACCEL_MAX_PLAUSIBLE_NOISE 0.01f
@@ -28,7 +28,7 @@ extern "C" {
 // max plausible static offset
 #define ACCEL_MAX_PLAUSIBLE_OFFSET 1
 
-void upkeep_velo_kf_accel(uint8_t rtd, float tps, float bps);
+void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed);
 void feed_velo_kf_accel(int16_t raw_accel_x);
 
 #ifdef __cplusplus
