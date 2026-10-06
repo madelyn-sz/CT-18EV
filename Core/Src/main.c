@@ -163,6 +163,8 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 		accel_x_raw = (int16_t)(((uint16_t)RxData[1] << 8) | RxData[0]);
 		accel_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
 		accel_z_raw = (int16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
+
+		feed_velo_kf_accel(accel_x_raw);
 	} else if (RxHeader.StdId == CAN_ID_RX_AIM_GYRO) {
 		gyro_x_raw = (int16_t)(((uint16_t)RxData[1] << 8) | RxData[0]);
 		gyro_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
@@ -460,6 +462,8 @@ int main(void)
 				|| !ready_to_drive;
 
 		torque_request = torque_lut(tmap_lut(tps_combined));
+
+		upkeep_velo_kf_accel(ready_to_drive, tps_combined, bps);
 
 		const soc_kf_debug_t *kf = soc_kf_get_debug();
 		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)

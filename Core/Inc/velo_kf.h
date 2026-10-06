@@ -13,8 +13,23 @@
 extern "C" {
 #endif
 
+// theshold for throttle unpressed
+#define TPS_THRESHOLD_OFF 0.05f
+
+// threshold for brake being pressed
+#define BPS_THRESHOLD_ON 0.7f
+
+// number of samples to collect before completing calibration
+#define OFFSET_CALIBRATION_SAMPLES 100
+
+// max accelerometer readings that could plausibly be explained by noise
+#define ACCEL_MAX_PLAUSIBLE_NOISE 0.01f
+
+// max plausible static offset
+#define ACCEL_MAX_PLAUSIBLE_OFFSET 1
+
+void upkeep_velo_kf_accel(uint8_t rtd, float tps, float bps);
 void velo_kf_feed_accel(int16_t raw_accel_x);
-void velo_kf_feed_encoder(uint16_t raw_encoder_l, uint16_t raw_encoder_r);
 
 #ifdef __cplusplus
 }
