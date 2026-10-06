@@ -31,6 +31,7 @@
 #include "launch_control.h"
 #include "regen.h"
 #include "soc_kf.h"
+#include "velo_kf.h"
 
 /* USER CODE END Includes */
 

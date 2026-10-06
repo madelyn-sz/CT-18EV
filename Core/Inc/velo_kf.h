@@ -29,7 +29,7 @@ extern "C" {
 #define ACCEL_MAX_PLAUSIBLE_OFFSET 1
 
 void upkeep_velo_kf_accel(uint8_t rtd, float tps, float bps);
-void velo_kf_feed_accel(int16_t raw_accel_x);
+void feed_velo_kf_accel(int16_t raw_accel_x);
 
 #ifdef __cplusplus
 }

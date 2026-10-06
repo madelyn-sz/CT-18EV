@@ -10,8 +10,12 @@
 #include "config.h"
 #include "Eigen/Core"
 
+#include <cstdlib>
+#include <cstdint>
+#include <algorithm>
+
 constexpr int N_STATES = 2;
-constexpr int N_MEASUREMENTS = 2;
+constexpr int N_MEASUREMENTS = 1;
 
 // States are x = [v_long, a_bias]
 // TODO: Tune filter!!
@@ -67,7 +71,7 @@ struct velo_kf_calibration {
 };
 
 struct velo_kf_state {
-	int16_t raw_accel_x = 0;
+	int16_t accel_x_raw = 0;
 
 	Eigen::Vector<float, N_STATES> x;
 	Eigen::Matrix<float, N_STATES, N_STATES> P;
@@ -89,7 +93,6 @@ void upkeep_velo_kf_accel(uint8_t rtd, float tps, float bps) {
 
 void feed_velo_kf_accel(int16_t accel_x_raw) {
 	bool rtd_rising = c.rtd_curr && !c.rtd_prev;
-	bool rtd_falling = !c.rtd_curr && c.rtd_prev;
 
 	c.rtd_prev = c.rtd_curr;
 
@@ -132,7 +135,7 @@ void feed_velo_kf_accel(int16_t accel_x_raw) {
 		}
 	}
 
-	s.raw_accel_x = static_cast<int16_t>(
+	s.accel_x_raw = static_cast<int16_t>(
 		std::clamp<int32_t>(static_cast<int32_t>(accel_x_raw) - c.offset_static, INT16_MIN, INT16_MAX)
 	);
 }
