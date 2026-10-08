@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <velo_estimator.h>
 
 #include "config.h"
 #include "pinout.h"
@@ -31,7 +32,6 @@
 #include "launch_control.h"
 #include "regen.h"
 #include "soc_kf.h"
-#include "velo_kf.h"
 
 /* USER CODE END Includes */
 
@@ -165,7 +165,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 		accel_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
 		accel_z_raw = (int16_t)(((uint16_t)RxData[5] << 8) | RxData[4]);
 
-		feed_velo_kf_accel(accel_x_raw);
+		feed_velo_estimator_accel(accel_x_raw);
 	} else if (RxHeader.StdId == CAN_ID_RX_AIM_GYRO) {
 		gyro_x_raw = (int16_t)(((uint16_t)RxData[1] << 8) | RxData[0]);
 		gyro_y_raw = (int16_t)(((uint16_t)RxData[3] << 8) | RxData[2]);
@@ -465,7 +465,7 @@ int main(void)
 		torque_request = torque_lut(tmap_lut(tps_combined));
 
 		// TODO: Once wheel speed sensors are added, pass wheel speed instead of zero
-		upkeep_velo_kf_accel(ready_to_drive, tps_combined, motor_speed, 0);
+		upkeep_velo_estimator_conditions(ready_to_drive, tps_combined, motor_speed, 0);
 
 		const soc_kf_debug_t *kf = soc_kf_get_debug();
 		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)

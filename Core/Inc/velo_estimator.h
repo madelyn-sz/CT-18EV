@@ -5,8 +5,8 @@
  *      Author: Madelyn
  */
 
-#ifndef INC_VELO_KF_H_
-#define INC_VELO_KF_H_
+#ifndef INC_VELO_ESTIMATOR_H_
+#define INC_VELO_ESTIMATOR_H_
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -35,12 +35,12 @@ extern "C" {
 #define MOTOR_RPM_THRESHOLD_STILL 5
 #define WHEEL_SPEED_THRESHOLD_STILL 1
 
-void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed);
-void feed_velo_kf_accel(int16_t raw_accel_x);
+void upkeep_velo_estimator_conditions(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed);
+void feed_velo_estimator_accel(int16_t raw_accel_x);
 
 #ifdef __cplusplus
 }
 #endif
 
 
-#endif /* INC_VELO_KF_H_ */
+#endif /* INC_VELO_ESTIMATOR_H_ */

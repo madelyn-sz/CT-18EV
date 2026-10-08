@@ -5,7 +5,7 @@
  *      Author: Madelyn
  */
 
-#include "velo_kf.h"
+#include <velo_estimator.h>
 #include "main.h"
 #include "config.h"
 
@@ -22,7 +22,7 @@ enum calibration_status {
 
 // all of these values are x1000 so they can be used immediately on accelerometer data
 // before converting to floats
-struct velo_kf_calibration {
+struct velo_estimator_calibration {
 	calibration_status flag_status = CALIBRATION_IDLE;
 
 	volatile bool rtd_curr = false;
@@ -39,16 +39,16 @@ struct velo_kf_calibration {
 	uint16_t offset_calibration_samples = 0;
 };
 
-struct velo_kf_state {
+struct velo_estimator_state {
 	int16_t accel_x_raw = 0;
 };
 
-static velo_kf_calibration c;
-static velo_kf_state s;
+static velo_estimator_calibration c;
+static velo_estimator_state s;
 
 // TODO: This should really use the launch control switch instead of RTD
 // change as soon as physical launch control switch is installed
-void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed) {
+void upkeep_velo_estimator_conditions(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t wheel_speed) {
 	c.inputs_ok = tps < TPS_THRESHOLD_OFF && motor_rpm < MOTOR_RPM_THRESHOLD_STILL && wheel_speed < WHEEL_SPEED_THRESHOLD_STILL;
 	c.rtd_curr = rtd;
 }
@@ -60,7 +60,7 @@ void upkeep_velo_kf_accel(uint8_t rtd, float tps, uint32_t motor_rpm, uint32_t w
 // TODO: send debug frame for different calibration failure causes
 // TODO: expose flag status to downstream code
 
-void feed_velo_kf_accel(int16_t accel_x_raw) {
+void feed_velo_estimator_accel(int16_t accel_x_raw) {
 	bool rtd_rising = c.rtd_curr && !c.rtd_prev;
 
 	c.rtd_prev = c.rtd_curr;
