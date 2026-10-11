@@ -15,22 +15,27 @@ if [ "$short" = "00000000" ]; then
     exit 1
 fi
 
-git fetch --quiet origin 'refs/flash/*:refs/flash/*' 2>/dev/null
+git fetch --quiet origin flash-log 2>/dev/null
 
 full=$(git rev-parse --verify --quiet "$short^{commit}")
 if [ -z "$full" ]; then
-    echo "$short: not found (try git fetch, or the snapshot was never pushed)"
+    echo "$short: not found (fetch flash-log, or it was never pushed)"
     exit 1
 fi
 
+git log -1 --format='%H%n%s%n%b' "$full"
+
+case "$(git log -1 --format=%s "$full")" in
+flash\ *)
+    base=$(git rev-parse -q --verify "$full^2" || git rev-parse -q --verify "$full^1")
+    if [ -n "$base" ] && [ -n "$(git diff --name-only "$base" "$full")" ]; then
+        echo "Uncommitted changes on top of $(git rev-parse --short "$base"):"
+        git diff --stat "$base" "$full"
+    fi
+    ;;
+esac
+
 url=$(git remote get-url origin 2>/dev/null |
     sed -e 's#^git@github.com:#https://github.com/#' -e 's#\.git$##')
-
-git log -1 --format='%H%n%ad  %an%n%s' "$full"
-if [ -n "$(git for-each-ref --points-at "$full" refs/flash/)" ]; then
-    echo
-    echo "Snapshot of uncommitted code on top of $(git rev-parse --short "$full^"):"
-    git diff --stat "$full^" "$full"
-fi
 [ -n "$url" ] && echo && echo "$url/commit/$full"
 exit 0

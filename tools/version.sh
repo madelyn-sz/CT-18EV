@@ -1,12 +1,14 @@
 #!/bin/sh
-# CubeIDE pre-build step. Writes Core/Inc/build_version.h with the git hash of
-# the code being built. Uncommitted changes are snapshotted to refs/flash/<hash>
-# without touching the branch or index. Never fails the build.
+# CubeIDE pre-build step. Commits the exact code being built to the flash-log
+# branch, with the date and time in the message, and writes that commit's hash
+# to Core/Inc/build_version.h. Your branch, index and files are untouched.
+# Never fails the build.
 
 cd "$(dirname "$0")/.." || exit 0
 
 OUT=Core/Inc/build_version.h
-FLAG_SNAPSHOT=1
+LOG=refs/heads/flash-log
+FLAG_DIRTY=1
 FLAG_NONE=2
 
 write_header() {
@@ -26,37 +28,50 @@ fail() {
     exit 0
 }
 
+# Commit the build was made from: second parent, or only parent
+base_of() {
+    git rev-parse -q --verify "$1^2" 2>/dev/null || git rev-parse -q --verify "$1^1" 2>/dev/null
+}
+
 git rev-parse --git-dir >/dev/null 2>&1 || fail
 head=$(git rev-parse HEAD 2>/dev/null) || fail
 
-if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
-    hash=$head
-    flags=0
+flags=0
+[ -n "$(git status --porcelain 2>/dev/null)" ] && flags=$FLAG_DIRTY
+
+# Snapshot the working tree through a temporary index
+index=$(git rev-parse --git-path flash-index) || fail
+cp "$(git rev-parse --git-path index)" "$index" 2>/dev/null || rm -f "$index"
+GIT_INDEX_FILE=$index git add -A >/dev/null 2>&1 || { rm -f "$index"; fail; }
+tree=$(GIT_INDEX_FILE=$index git write-tree) || { rm -f "$index"; fail; }
+rm -f "$index"
+
+tip=$(git rev-parse -q --verify "$LOG")
+
+# Same code from the same commit as the last build: reuse it
+if [ -n "$tip" ] && [ "$(git rev-parse "$tip^{tree}")" = "$tree" ] && [ "$(base_of "$tip")" = "$head" ]; then
+    hash=$tip
 else
-    index=$(git rev-parse --git-path flash-index) || fail
-    cp "$(git rev-parse --git-path index)" "$index" 2>/dev/null || rm -f "$index"
-    GIT_INDEX_FILE=$index git add -A >/dev/null 2>&1 || { rm -f "$index"; fail; }
-    tree=$(GIT_INDEX_FILE=$index git write-tree) || { rm -f "$index"; fail; }
-    rm -f "$index"
-
-    # Reuse the snapshot if this exact code was already built
-    hash=$(git for-each-ref --format='%(objectname) %(tree) %(parent)' refs/flash/ |
-        awk -v t="$tree" -v p="$head" '$2 == t && $3 == p { print $1; exit }')
-
-    if [ -z "$hash" ]; then
-        hash=$(git commit-tree "$tree" -p "$head" \
-            -m "flash snapshot $(date '+%Y-%m-%d %H:%M') on $(git rev-parse --abbrev-ref HEAD)") || fail
-        short=$(printf '%.8s' "$hash")
-        git update-ref "refs/flash/$short" "$hash" || fail
+    if [ "$flags" = "$FLAG_DIRTY" ]; then
+        body="Includes uncommitted changes"
+    else
+        body="Clean build"
     fi
-    flags=$FLAG_SNAPSHOT
+    msg="flash $(date '+%Y-%m-%d %H:%M:%S') on $(git rev-parse --abbrev-ref HEAD) @ $(printf '%.8s' "$head")"
+
+    if [ -n "$tip" ] && [ "$tip" != "$head" ]; then
+        hash=$(git commit-tree "$tree" -p "$tip" -p "$head" -m "$msg" -m "$body") || fail
+    else
+        hash=$(git commit-tree "$tree" -p "$head" -m "$msg" -m "$body") || fail
+    fi
+    git update-ref "$LOG" "$hash" $tip || fail
 fi
 
 write_header "$(printf '%.8s' "$hash")" "$flags"
 
-# Share snapshots in the background, catches up after offline builds
-if git remote get-url origin >/dev/null 2>&1 && [ -n "$(git for-each-ref refs/flash/)" ]; then
-    (GIT_TERMINAL_PROMPT=0 git push --quiet origin 'refs/flash/*:refs/flash/*' >/dev/null 2>&1 &)
+# Share in the background, catches up after offline builds
+if git remote get-url origin >/dev/null 2>&1; then
+    (sh tools/push_flash.sh >/dev/null 2>&1 &)
 fi
 
 exit 0
