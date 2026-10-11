@@ -2,11 +2,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #undef REGEN_ENABLE
 #define REGEN_ENABLE 1
 
 #include "../Core/Src/regen.c"
+#include "../Core/Src/soc_kf.c"
 
 #define KF_OK   (SOC_KF_FLAG_INIT | SOC_KF_FLAG_BMS_LIVE)
 #define STEP_MS 5u
@@ -395,23 +397,27 @@ static void test_pack(void)
     regen_init();
     settle(0, RPM, 0.0f, 0.5f, KF_OK);
 
-    uint8_t d[8] = {0};
+    uint8_t d[8];
+    memset(d, 0xAA, sizeof(d));
     regen_pack_debug(d);
-    check_eq(d[0], 0x0D, "flags: active, soc ok, soc scale");
-    check_eq(d[1], 100, "pedal");
+    check_eq(d[0], 0, "not cut");
+    check_eq(d[1], 100, "soc scale");
     check_eq(d[2], 43, "max regen (Nm)");
-    check_eq((int16_t)(d[3] | d[4] << 8), FULL, "target");
-    check_eq((int16_t)(d[5] | d[6] << 8), FULL, "torque");
-    check_eq(d[7], 100, "soc scale");
+    for (int i = REGEN_DEBUG_DLC; i < 8; i++) {
+        check_eq(d[i], 0xAA, "nothing written past dlc");
+    }
 
     settle(0, RPM, 0.0f, 0.85f, KF_OK);
     regen_pack_debug(d);
-    check_eq(d[7], 44, "partial soc scale");
+    check_eq(d[1], 44, "partial soc scale");
 
     settle(0, RPM, 0.0f, 0.97f, KF_OK);
     regen_pack_debug(d);
-    check_eq(d[0] & 0x08, 0, "soc scale flag clear above fade");
-    check_eq(d[7], 0, "zero soc scale");
+    check_eq(d[1], 0, "zero soc scale");
+
+    regen_update(1000, RPM, 0.9f, bms(0.5f, KF_OK, V_PACK), 1u, STEP_MS);
+    regen_pack_debug(d);
+    check_eq(d[0], 1, "cut");
 }
 
 int main(void)

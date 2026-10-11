@@ -21,6 +21,8 @@
 /tools/rtd_test
 /tools/adc_test
 /tools/regen_test
+/tools/soc_derate_test
+/tools/soc_kf_replay
 /tools/*.dSYM/
 
 # CubeIDE macOS artifact.
