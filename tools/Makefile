@@ -10,12 +10,15 @@ CC      ?= cc
 CFLAGS  ?= -O1 -g -Wall -Wextra -I../Core/Inc
 LDLIBS   = -lm
 
-TESTS = soc_kf_test lc_test can_tx_test rtd_test adc_test regen_test
+TESTS = soc_kf_test lc_test can_tx_test rtd_test adc_test regen_test soc_derate_test control_test
+
+# Built so they stay compiling, not run (need a log to replay)
+TOOLS = soc_kf_replay
 
 .PHONY: all test clean
 all: test
 
-test: $(TESTS)
+test: $(TESTS) $(TOOLS)
 	@for t in $(TESTS); do \
 		echo "== $$t"; \
 		./$$t || exit 1; \
@@ -41,8 +44,18 @@ rtd_test: rtd_test.c ../Core/Src/rtd.c ../Core/Inc/rtd.h
 can_tx_test: can_tx_test.c ../Core/Src/can_tx.c ../Core/Inc/can_tx.h
 	$(CC) $(CFLAGS) -DCAN_TX_HOST -o $@ can_tx_test.c $(LDLIBS)
 
-regen_test: regen_test.c ../Core/Src/regen.c ../Core/Inc/regen.h ../Core/Inc/config.h ../Core/Inc/soc_kf.h
-	$(CC) $(CFLAGS) -o $@ regen_test.c $(LDLIBS)
+regen_test: regen_test.c ../Core/Src/regen.c ../Core/Inc/regen.h ../Core/Inc/config.h ../Core/Src/soc_kf.c ../Core/Inc/soc_kf.h
+	$(CC) $(CFLAGS) -DSOC_KF_HOST -o $@ regen_test.c $(LDLIBS)
+
+soc_derate_test: soc_derate_test.c ../Core/Src/soc_derate.c ../Core/Inc/soc_derate.h ../Core/Inc/soc_derate_tunes.h ../Core/Inc/config.h ../Core/Src/soc_kf.c ../Core/Inc/soc_kf.h ../Core/Inc/soc_kf_tables.h
+	$(CC) $(CFLAGS) -DSOC_KF_HOST -o $@ soc_derate_test.c $(LDLIBS)
+
+# control takes inputs and elapsed time from the caller, so it needs no shim.
+control_test: control_test.c ../Core/Src/control.c ../Core/Inc/control.h ../Core/Inc/config.h
+	$(CC) $(CFLAGS) -o $@ control_test.c $(LDLIBS)
+
+soc_kf_replay: soc_kf_replay.c ../Core/Src/soc_kf.c ../Core/Inc/soc_kf.h ../Core/Inc/soc_kf_tables.h
+	$(CC) $(CFLAGS) -DSOC_KF_HOST -o $@ soc_kf_replay.c $(LDLIBS)
 
 clean:
-	rm -rf $(TESTS) *.dSYM
+	rm -rf $(TESTS) $(TOOLS) *.dSYM

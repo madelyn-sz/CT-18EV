@@ -72,10 +72,8 @@
 #define RTD_TIMEOUT_MAX   200
 #define RTD_TIMEOUT_INIT  199
 
-/* Inverter disable debounce (TIM2 ticks, 50 ms at 200 Hz) */
-#define DISABLE_DEBOUNCE_TRIP 10
-#define DISABLE_DEBOUNCE_MAX  100
-#define DISABLE_DEBOUNCE_INIT 999
+/* Inverter disable debounce: fault must persist this long (ms) */
+#define DISABLE_DEBOUNCE_MS 50u
 
 #define MOTOR_SPEED_TIMEOUT_MS 200u
 
