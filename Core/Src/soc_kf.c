@@ -440,9 +440,20 @@ void soc_kf_update(uint32_t tick_ms)
     s.dbg.flags = flags;
 }
 
+float soc_kf_ocv_to_soc(float v_cell)
+{
+    return ocv_inverse(v_cell);
+}
+
 const soc_kf_debug_t *soc_kf_get_debug(void)
 {
     return &s.dbg;
+}
+
+uint8_t soc_kf_valid(const soc_kf_debug_t *kf)
+{
+    return (kf->flags & SOC_KF_FLAG_INIT) && (kf->flags & SOC_KF_FLAG_BMS_LIVE) &&
+           !(kf->flags & SOC_KF_FLAG_VBAD);
 }
 
 void soc_kf_pack_state(uint8_t *d)

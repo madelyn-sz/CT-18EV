@@ -7,6 +7,7 @@
 #include "soc_kf.h"
 
 #define REGEN_DEBUG_CAN_ID 0x559
+#define REGEN_DEBUG_DLC    3
 
 #define REGEN_CELL_CHARGE_A 25.0f
 

@@ -31,6 +31,7 @@
 #include "launch_control.h"
 #include "regen.h"
 #include "soc_kf.h"
+#include "soc_derate.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -93,6 +94,7 @@ static uint32_t torque_limit = TORQUE_LIMIT_NM_X10;
 volatile uint32_t motor_speed = 0;
 volatile uint32_t motor_speed_tick = 0;
 volatile uint32_t current_limit = CURRENT_LIMIT_DEFAULT_A;
+volatile uint32_t bms_dcl = CURRENT_LIMIT_DEFAULT_A;
 volatile uint8_t inverter_enabled = 0;
 volatile uint8_t inverter_lockout = 1;
 volatile uint8_t control_ready = 0;
@@ -140,12 +142,15 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 		motor_speed_tick = HAL_GetTick();
 	} else if (RxHeader.StdId == CAN_ID_RX_BMS_DCL) {
 		uint16_t dcl_raw = (uint16_t) (RxData[1] << 8 | RxData[0]);
-		current_limit = (dcl_raw > 3u) ? (uint32_t) (dcl_raw - 3u) : 0u;
+		bms_dcl = (dcl_raw > 3u) ? (uint32_t) (dcl_raw - 3u) : 0u;
 	} else if (RxHeader.StdId == CAN_ID_RX_BMS_STATUS) {
 		bus_voltage = (RxData[5] << 8 | RxData[4]);
 		soc_kf_feed_bms((int16_t) (uint16_t) (RxData[7] << 8 | RxData[6]),
 				(uint16_t) (RxData[5] << 8 | RxData[4]), RxData[2], RxData[1],
 				HAL_GetTick());
+	} else if (RxHeader.StdId == CAN_ID_RX_BMS_CELL) {
+		soc_derate_feed_cells((uint16_t) (RxData[5] << 8 | RxData[4]),
+				(uint16_t) (RxData[7] << 8 | RxData[6]), HAL_GetTick());
 	} else if (RxHeader.StdId == LC_AIM_WHEEL_SPEED_CAN_ID) {
 		uint16_t fl_speed = RxData[1] << 8 | RxData[0];
 		lc_feed_wheel_speed(fl_speed);
@@ -294,6 +299,17 @@ int main(void)
 	canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
 	HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
 
+	canfilterconfig.FilterActivation = CAN_FILTER_ENABLE;
+	canfilterconfig.FilterBank = 7; /* BMS low cell */
+	canfilterconfig.FilterFIFOAssignment = CAN_RX_FIFO0;
+	canfilterconfig.FilterIdHigh = CAN_ID_RX_BMS_CELL << 5;
+	canfilterconfig.FilterIdLow = 0;
+	canfilterconfig.FilterMaskIdHigh = CAN_STID_MASK_HIGH;
+	canfilterconfig.FilterMaskIdLow = CAN_STID_MASK_LOW;
+	canfilterconfig.FilterMode = CAN_FILTERMODE_IDMASK;
+	canfilterconfig.FilterScale = CAN_FILTERSCALE_32BIT;
+	HAL_CAN_ConfigFilter(&hcan, &canfilterconfig);
+
 	HAL_CAN_Start(&hcan);
 
 	if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING)
@@ -309,6 +325,7 @@ int main(void)
 	regen_init();
 #endif
 	soc_kf_init();
+	soc_derate_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -420,10 +437,12 @@ int main(void)
 		should_disable_inverter = (disable_debounce > DISABLE_DEBOUNCE_TRIP)
 				|| !ready_to_drive;
 
+		const soc_kf_debug_t *kf = soc_kf_get_debug();
+		current_limit = soc_derate_dcl(kf, bms_dcl, loop_tick, loop_dt_ms);
+
 		torque_request = torque_lut(tmap_lut(tps_combined));
 
 #if REGEN_ENABLE
-		const soc_kf_debug_t *kf = soc_kf_get_debug();
 		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)
 				> (int32_t) MOTOR_SPEED_TIMEOUT_MS;
 		const uint8_t regen_cut = brake_pressed || start_disable_debounce
@@ -503,9 +522,12 @@ int main(void)
 				can_tx_send(SOC_KF_CAN_ID_STATE, kfData, 8);
 			}
 
+			soc_derate_pack_debug(TxData);
+			can_tx_send(SOC_DERATE_CAN_ID, TxData, 8);
+
 #if REGEN_ENABLE
 			regen_pack_debug(TxData);
-			can_tx_send(REGEN_DEBUG_CAN_ID, TxData, 8);
+			can_tx_send(REGEN_DEBUG_CAN_ID, TxData, REGEN_DEBUG_DLC);
 #endif
 
 			print_ready = 0;
