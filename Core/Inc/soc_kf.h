@@ -70,6 +70,12 @@ void soc_kf_update(uint32_t tick_ms);
 
 const soc_kf_debug_t *soc_kf_get_debug(void);
 
+/* Cell open-circuit voltage to SoC (0-1) */
+float soc_kf_ocv_to_soc(float v_cell);
+
+/* Initialized, BMS live, voltage sane */
+uint8_t soc_kf_valid(const soc_kf_debug_t *kf);
+
 void soc_kf_pack_state(uint8_t *d);
 
 #endif /* SOC_KF_H */

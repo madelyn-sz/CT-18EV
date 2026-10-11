@@ -11,8 +11,8 @@
 #define ADC_BPS_V_PER_COUNT (ADC_BPS_VREF_V / ADC_FULL_SCALE_COUNTS)
 
 /* APPS calibration (V at ADC pin) */
-#define TPS1_0PER   1.38f
-#define TPS1_100PER 2.34f
+#define TPS1_0PER   1.39f
+#define TPS1_100PER 2.40f
 
 #define TPS2_0PER   0.62f
 #define TPS2_100PER 1.64f
@@ -86,11 +86,18 @@
 #define CURRENT_LIMIT_DEFAULT_A 125u
 #define BUS_VOLTAGE_DEFAULT_V   396u
 
+/* Tunes live in soc_derate_tunes.h */
+#define SOC_DERATE_CELL_STALE_MS 500u
+
+/* Weak cell SoC gap filter time constant (s) */
+#define SOC_DERATE_GAP_TAU_S 60.0f
+
 /* CAN IDs */
 #define CAN_ID_RX_INVERTER_STATE 0x0AA
 #define CAN_ID_RX_MOTOR_SPEED    0x0A5
 #define CAN_ID_RX_BMS_DCL        0x202
 #define CAN_ID_RX_BMS_STATUS     0x600
+#define CAN_ID_RX_BMS_CELL       0x79F
 
 #define CAN_ID_TX_INVERTER_CMD 0x0C0
 #define CAN_ID_TX_DEBUG        0x555

@@ -84,8 +84,7 @@ int32_t regen_update(int32_t drive_torque, uint32_t motor_speed_rpm, float tps,
     dbg.cut = 1;
     return drive_torque;
 #else
-    dbg.soc_ok = (kf->flags & SOC_KF_FLAG_INIT) && (kf->flags & SOC_KF_FLAG_BMS_LIVE) &&
-                 !(kf->flags & SOC_KF_FLAG_VBAD);
+    dbg.soc_ok = soc_kf_valid(kf);
     dbg.soc_scale = dbg.soc_ok ? soc_scale(kf->soc) : 0.0f;
     dbg.cut = cut;
 
@@ -102,21 +101,12 @@ int32_t regen_update(int32_t drive_torque, uint32_t motor_speed_rpm, float tps,
 void regen_pack_debug(uint8_t *d)
 {
 #if !REGEN_ENABLE
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < REGEN_DEBUG_DLC; i++) {
         d[i] = 0;
     }
 #else
-    const int16_t target = (int16_t)dbg.target;
-    const int16_t torque = (int16_t)dbg.torque;
-
-    d[0] = (uint8_t)((dbg.torque < 0) | (dbg.cut << 1) | (dbg.soc_ok << 2) |
-                     ((dbg.soc_scale > 0.0f) << 3));
-    d[1] = (uint8_t)(dbg.pedal * 100.0f);
+    d[0] = dbg.cut;
+    d[1] = (uint8_t)(dbg.soc_scale * 100.0f);
     d[2] = (uint8_t)dbg.max_nm;
-    d[3] = (uint8_t)(target & 0xFF);
-    d[4] = (uint8_t)((target >> 8) & 0xFF);
-    d[5] = (uint8_t)(torque & 0xFF);
-    d[6] = (uint8_t)((torque >> 8) & 0xFF);
-    d[7] = (uint8_t)(dbg.soc_scale * 100.0f);
 #endif
 }
