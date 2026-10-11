@@ -67,7 +67,7 @@ static int32_t settle(int32_t drive, uint32_t rpm, float tps, float soc, uint8_t
     return settle_v(drive, rpm, tps, soc, flags, V_PACK);
 }
 
-/* Mirrors tmap_lut in main.c */
+/* Mirrors control_torque_map in control.c */
 static int32_t drive_for(float tps)
 {
     const float x = fmaxf(TMAP_DRIVE_START, fminf(tps, TMAP_DEADBAND_HIGH));

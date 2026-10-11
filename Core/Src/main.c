@@ -32,6 +32,7 @@
 #include "regen.h"
 #include "soc_kf.h"
 #include "soc_derate.h"
+#include "control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -90,7 +91,6 @@ static void MX_ADC3_Init(void);
 CAN_RxHeaderTypeDef RxHeader;
 uint8_t RxData[8];
 
-static uint32_t torque_limit = TORQUE_LIMIT_NM_X10;
 volatile uint32_t motor_speed = 0;
 volatile uint32_t motor_speed_tick = 0;
 volatile uint32_t current_limit = CURRENT_LIMIT_DEFAULT_A;
@@ -100,13 +100,8 @@ volatile uint8_t inverter_lockout = 1;
 volatile uint8_t control_ready = 0;
 volatile uint8_t print_ready = 0;
 volatile uint8_t ready_to_drive = 0;
-uint8_t tps1_oor = 0;
-uint8_t tps2_oor = 0;
-uint8_t tps_dist_error = 0;
 volatile uint16_t rtd_timeout = RTD_TIMEOUT_INIT;
 volatile uint8_t rtd_buzzer_counter = 0;
-volatile uint8_t start_disable_debounce = 1;
-volatile uint16_t disable_debounce = DISABLE_DEBOUNCE_INIT;
 
 volatile uint32_t bus_voltage = BUS_VOLTAGE_DEFAULT_V;
 volatile uint8_t inv_message = 0;
@@ -116,6 +111,7 @@ volatile uint16_t ext_frame_count = 0;
 volatile uint32_t loop_dt_max_ms = 0;
 
 static uint8_t lc_was_enabled = 0;
+static control_t ctrl;
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	RxHeader.StdId = 0;
@@ -160,12 +156,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM2) {
 		control_ready = 1;
-		if (start_disable_debounce) {
-			disable_debounce += 1;
-			disable_debounce = CAP(disable_debounce, DISABLE_DEBOUNCE_MAX);
-		} else {
-			disable_debounce = 0;
-		}
 	} else if (htim->Instance == TIM3) {
 		print_ready = 1;
 		if (ready_to_drive && rtd_buzzer_counter < RTD_BUZZER_COUNTER_MAX) {
@@ -174,28 +164,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		rtd_timeout += 1;
 		rtd_timeout = CAP(rtd_timeout, RTD_TIMEOUT_MAX);
 	}
-}
-
-/* Map raw TPS to 0..1 across the drive range */
-static float tmap_lut(float tps) {
-	return (fmaxf(TMAP_DRIVE_START, fminf(tps, TMAP_DEADBAND_HIGH))
-			- TMAP_DRIVE_START)
-			* (1.0f / (TMAP_DEADBAND_HIGH - TMAP_DRIVE_START));
-}
-
-/* Map TPS to torque request (0.1 Nm), capped by DC current limit */
-static int32_t torque_lut(float tps) {
-	const float power_limit = (float) (TORQUE_POWER_NUM * current_limit)
-			/ fmaxf(TORQUE_SPEED_DIV_MIN,
-					(float) motor_speed * TORQUE_RPM_TO_DIV);
-
-	float torque_limit_local = fminf((float) torque_limit, power_limit);
-
-	if (motor_speed >= TORQUE_HIGH_SPEED_RPM) {
-		torque_limit_local = TORQUE_HIGH_SPEED_NM_X10;
-	}
-
-	return (int32_t) (tps * torque_limit_local);
 }
 
 /* USER CODE END 0 */
@@ -326,13 +294,12 @@ int main(void)
 #endif
 	soc_kf_init();
 	soc_derate_init();
+	control_init(&ctrl);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-	float tps1 = 0;
-	float tps2 = 0;
 	float tps_combined = 0;
 	float bps = 0;
 	int32_t torque_request = 0;
@@ -346,9 +313,6 @@ int main(void)
 
 	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start_IT(&htim3);
-
-	float tps1_avg = 0;
-	float tps2_avg = 0;
 
 	uint8_t rtd_raw = 0;
 	uint32_t last_loop_tick = HAL_GetTick();
@@ -373,27 +337,10 @@ int main(void)
 		tps2_adc = adc_tps2();
 		bps_adc = adc_bps();
 
-		float tps1_v = (float) tps1_adc * ADC_TPS_V_PER_COUNT;
-		tps1 = (tps1_v - TPS1_0PER) / (TPS1_100PER - TPS1_0PER);
-		tps1 = fmaxf(0.0f, fminf(tps1, 1.0f));
-		tps1_avg =
-				(tps1_avg == 0) ?
-						tps1 :
-						tps1_avg * TPS_IIR_RATIO
-								+ tps1 * (1.0f - TPS_IIR_RATIO);
-		tps1 = tps1_avg;
-
-		float tps2_v = (float) tps2_adc * ADC_TPS_V_PER_COUNT;
-		tps2 = (tps2_v - TPS2_0PER) / (TPS2_100PER - TPS2_0PER);
-		tps2 = fmaxf(0.0f, fminf(tps2, 1.0f));
-		tps2_avg =
-				(tps2_avg == 0) ?
-						tps2 :
-						tps2_avg * TPS_IIR_RATIO
-								+ tps2 * (1.0f - TPS_IIR_RATIO);
-		tps2 = tps2_avg;
-
-		tps_combined = (tps1 + tps2) / 2;
+		const control_pedals_t pedals = control_pedals(&ctrl,
+				(float) tps1_adc * ADC_TPS_V_PER_COUNT,
+				(float) tps2_adc * ADC_TPS_V_PER_COUNT);
+		tps_combined = pedals.tps;
 
 		bps = (float) bps_adc * ADC_BPS_V_PER_COUNT;
 		brake_pressed = bps > BPS_SETPOINT_V;
@@ -422,30 +369,23 @@ int main(void)
 			}
 		}
 
-		tps1_oor = tps1_v < TPS1_FAULT_LOW || tps1_v > TPS1_FAULT_HIGH;
-		tps2_oor = tps2_v < TPS2_FAULT_LOW || tps2_v > TPS2_FAULT_HIGH;
-		tps_dist_error = fabsf(tps1 - tps2) > APPS_TRIP_PERCENT;
+		bse_error = control_bse(&ctrl, brake_pressed, tps_combined);
 
-		if (!bse_error) {
-			bse_error = brake_pressed && tps_combined >= BSE_TRIP_TPS;
-		} else {
-			bse_error = tps_combined >= BSE_CLEAR_TPS;
-		}
-
-		start_disable_debounce = tps1_oor || tps2_oor || tps_dist_error
-				|| bse_error;
-		should_disable_inverter = (disable_debounce > DISABLE_DEBOUNCE_TRIP)
-				|| !ready_to_drive;
+		const uint8_t fault = pedals.tps1_oor || pedals.tps2_oor
+				|| pedals.tps_disagree || bse_error;
+		should_disable_inverter = control_fault_debounce(&ctrl, fault,
+				loop_dt_ms) || !ready_to_drive;
 
 		const soc_kf_debug_t *kf = soc_kf_get_debug();
 		current_limit = soc_derate_dcl(kf, bms_dcl, loop_tick, loop_dt_ms);
 
-		torque_request = torque_lut(tmap_lut(tps_combined));
+		torque_request = control_torque_limit(control_torque_map(tps_combined),
+				motor_speed, current_limit);
 
 #if REGEN_ENABLE
 		const uint8_t speed_stale = (int32_t) (loop_tick - motor_speed_tick)
 				> (int32_t) MOTOR_SPEED_TIMEOUT_MS;
-		const uint8_t regen_cut = brake_pressed || start_disable_debounce
+		const uint8_t regen_cut = brake_pressed || fault
 				|| should_disable_inverter || speed_stale
 				|| launch_control_enable;
 		torque_request = regen_update(torque_request, motor_speed, tps_combined,
@@ -466,48 +406,26 @@ int main(void)
 			torque_request = 0;
 		}
 
-		if (inverter_lockout == 1) {
-			TxData[0] = torque_request & 0xFF;
-			TxData[1] = torque_request >> 8 & 0xFF;
-			TxData[2] = 0x00;
-			TxData[3] = 0x00;
-			TxData[4] = 0x01; /* Forward */
-			TxData[5] = 0x00 | 0x02 | (heartbeat_counter << 4);
-			TxData[6] = 0x00;
-			TxData[7] = 0x00;
-
-			can_tx_send(CAN_ID_TX_INVERTER_CMD, TxData, 8);
-			heartbeat_counter += 1;
-			heartbeat_counter = heartbeat_counter & CAN_HEARTBEAT_MASK;
-		} else {
-			TxData[0] = torque_request & 0xFF;
-			TxData[1] = torque_request >> 8 & 0xFF;
-			TxData[2] = 0x00;
-			TxData[3] = 0x00;
-			TxData[4] = 0x01; /* Forward */
-			TxData[5] = (~should_disable_inverter & 0x01) | 0x02
-					| (heartbeat_counter << 4);
-			TxData[6] = 0x00;
-			TxData[7] = 0x00;
-
-			can_tx_send(CAN_ID_TX_INVERTER_CMD, TxData, 8);
-			heartbeat_counter += 1;
-			heartbeat_counter = heartbeat_counter & CAN_HEARTBEAT_MASK;
-		}
+		control_pack_inverter(TxData, torque_request, inverter_lockout,
+				should_disable_inverter, heartbeat_counter);
+		can_tx_send(CAN_ID_TX_INVERTER_CMD, TxData, 8);
+		heartbeat_counter += 1;
+		heartbeat_counter = heartbeat_counter & CAN_HEARTBEAT_MASK;
 
 		if (print_ready) {
-			TxData[0] = rtd_timeout & 0xFF;
-			TxData[1] = (bps_adc >> 4) & 0xFF;
-			TxData[2] = (tps1_adc >> 4) & 0xFF;
-			TxData[3] = (tps2_adc >> 4) & 0xFF;
-			TxData[4] = (inverter_lockout << 7) | (inverter_enabled << 6)
-					| (tps_dist_error << 5) | (tps2_oor << 4) | (tps1_oor << 3)
-					| (bse_error << 2) | (ready_to_drive << 1)
-					| should_disable_inverter;
-			TxData[5] = (int) (tps1 * 100) & 0xff;
-			TxData[6] = (int) (tps2 * 100) & 0xff;
-			TxData[7] = (int) (tps_combined * 100) & 0xFF;
-
+			const control_status_t status = {
+				.rtd_timeout = (uint8_t) (rtd_timeout & 0xFF),
+				.bps_adc = bps_adc,
+				.tps1_adc = tps1_adc,
+				.tps2_adc = tps2_adc,
+				.pedals = pedals,
+				.bse = bse_error,
+				.ready_to_drive = ready_to_drive,
+				.disable = should_disable_inverter,
+				.inverter_enabled = inverter_enabled,
+				.inverter_lockout = inverter_lockout,
+			};
+			control_pack_debug(TxData, &status);
 			can_tx_send(CAN_ID_TX_DEBUG, TxData, 8);
 
 			TxData[0] = (ready_to_drive) & 0x01;
