@@ -61,6 +61,7 @@ CAN_HandleTypeDef hcan;
 
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 
 PCD_HandleTypeDef hpcd_USB_FS;
 
@@ -79,6 +80,7 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_ADC3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -125,6 +127,30 @@ volatile uint16_t ext_frame_count = 0;
 volatile uint32_t loop_dt_max_ms = 0;
 
 static uint8_t lc_was_enabled = 0;
+
+volatile uint32_t ts_overflow = 0;
+
+// get timestamp in microsecond resolution
+// needed for encoder period measurement
+uint32_t ts_now() {
+	// disable ISRs temporarily so we don't need to worry about races
+	uint32_t primask = __get_PRIMASK();
+	__disable_irq();
+
+	uint32_t overflow = ts_overflow;
+	uint32_t count = __HAL_TIM_GET_COUNTER(&htim4);
+
+	// overflow happened post read, reread and increment overflow
+	if (__HAL_TIM_GET_FLAG(&htim4, TIM_FLAG_UPDATE)) {
+		count = __HAL_TIM_GET_COUNTER(&htim4);
+		overflow += 1;
+	}
+
+	__set_PRIMASK(primask);
+
+    // build uint32_t from count and overflow
+    return (overflow << 16) | count;
+}
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 	RxHeader.StdId = 0;
@@ -189,6 +215,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		}
 		rtd_timeout += 1;
 		rtd_timeout = CAP(rtd_timeout, RTD_TIMEOUT_MAX);
+	} else if (htim->Instance == TIM4) {
+		ts_overflow += 1;
 	}
 }
 
@@ -222,6 +250,7 @@ static int32_t torque_lut(float tps) {
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 	for (uint32_t i = 0; i < sizeof(RxData); i++) {
 		RxData[i] = 0;
@@ -254,6 +283,7 @@ int main(void)
   MX_TIM3_Init();
   MX_ADC2_Init();
   MX_ADC3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 	uint8_t TxData[8];
 	/* Bank 1 held 0x0B1 (dynamic torque limit); nothing decodes it. */
@@ -371,6 +401,7 @@ int main(void)
 
 	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start_IT(&htim3);
+	HAL_TIM_Base_Start_IT(&htim4);
 
 	float tps1_avg = 0;
 	float tps2_avg = 0;
@@ -911,6 +942,51 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 72-1;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
 
 }
 
