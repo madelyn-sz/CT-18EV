@@ -12,6 +12,7 @@
 #define LC_SLIP_TARGET        0.10f
 #define LC_CROSSOVER_SPEED_MS 2.0f
 #define LC_EXIT_SPEED_MS      20.0f
+#define LC_MIN_EDGES 3
 
 /* Throttle thresholds */
 #define LC_THROTTLE_TRIGGER 0.40f
@@ -44,41 +45,31 @@
 #define LC_MS_TO_RPM (LC_GEAR_RATIO * 60.0f / (2.0f * 3.14159265f * LC_TIRE_RADIUS_M))
 #define LC_KMH10_TO_MS (1.0f / 36.0f)
 
-typedef enum {
-    LC_STATE_ARMED,
-    LC_STATE_LAUNCHING_OPENLOOP,
-    LC_STATE_LAUNCHING_CLOSEDLOOP
+// TODO: Estimate from weight transfer
+#define LC_TRACTION_LIMIT_TORQUE_NM 220
+
+// TODO: Tune!
+#define LC_TAKEUP_TORQUE_PCT 0.1
+#define LC_LIMITED_DRIVELINE_RATE 1
+#define LC_LIMITED_TRACTION_RATE 1
+
+#define LC_TAKEUP_TIME_MS 50
+#define LC_LIMITED_DRIVELINE_TIME_MS 100
+#define LC_LIMITED_TRACTIION_TIME_MS 50
+
+typedef enum lc_state {
+	LC_STATE_ARMED,
+	LC_STATE_LAUNCHING_OPENLOOP,
+	LC_STATE_LAUNCHING_CLOSEDLOOP,
+	LC_STATE_IDLE
 } lc_state_t;
 
-typedef struct {
-    lc_state_t state;
-    float slip_ratio;       /* Filtered slip ratio */
-    float slip_ratio_raw;   /* Unfiltered slip ratio */
-    float slip_rate;        /* d(slip)/dt */
-    float dt_s;             /* Loop period (s) */
-    float pid_p_term;       /* Proportional term */
-    float pid_i_term;       /* Integral term */
-    float pid_d_term;       /* Derivative term */
-    float pid_output;       /* Total PID output */
-    int32_t lc_torque;      /* LC torque limit (0.1 Nm) */
-    int32_t map_torque;     /* Map torque (0.1 Nm) */
-    float vehicle_speed;    /* Front wheel speed (m/s) */
-    float rear_wheel_speed; /* Motor wheel speed (m/s) */
-    uint8_t sensor_healthy; /* Wheel speed CAN active */
-    uint8_t slip_rate_cut;  /* Slip rate cut active */
-} lc_debug_t;
+typedef struct lc_debug {
+	lc_state_t state;
 
-void lc_init(void);
-
-/* Returns commanded torque (0.1 Nm) */
-int32_t lc_update(int32_t driver_torque, uint32_t motor_speed_rpm, float tps_combined);
-
-/* Wheel speed input (0.1 km/h) */
-void lc_feed_wheel_speed(uint16_t front_left_speed_x10);
-
-void lc_feed_tick(uint32_t tick_ms);
-const lc_debug_t *lc_get_debug(void);
-lc_state_t lc_get_state(void);
-extern volatile uint8_t launch_control_enable;
+	uint16_t edges_seen = 0;
+	float front_wheel_speed = 0;
+	float rear_wheel_speed = 0;
+} lc_data_t;
 
 #endif /* LAUNCH_CONTROL_H */
